@@ -6,7 +6,7 @@
 
 [下载最新版](https://github.com/dingyu123456/offer-atlas/releases/latest) · [快速上手](docs/offer-atlas-quick-start.md) · [云同步指南](docs/cloud-sync-guide-zh.md)
 
-![OfferAtlas 总览与投递管理界面](docs/assets/offer-atlas-dashboard.png)
+![OfferAtlas 核心功能](docs/assets/offer-atlas-features.png)
 
 ## 从岗位到 Offer
 
@@ -20,7 +20,11 @@
 | 切换电脑继续使用 | 连接自己的 Gitee 账号后，岗位、投递、附件和简历可在多台 Windows 电脑间自动同步，也可随时手动同步。 |
 | 需要安心整理数据 | 完整备份支持恢复；投递镜像可直接用 Excel、WPS 或 LibreOffice 查看，方便留存或分享。 |
 
-![OfferAtlas 从岗位、流程到日历和简历的关联](docs/assets/offer-atlas-workflow.png)
+## 一条清晰的投递路径
+
+OfferAtlas 将一次求职过程拆成几个自然步骤：先留下岗位信息，再绑定投递和简历，持续记录节点，最后用日历、待办和统计掌握下一步。
+
+![OfferAtlas 投递流程](docs/assets/offer-atlas-process.png)
 
 ## 使用教程
 
