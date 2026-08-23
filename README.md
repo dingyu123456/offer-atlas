@@ -6,6 +6,8 @@
 
 [下载最新版](https://github.com/dingyu123456/offer-atlas/releases/latest) · [快速上手](docs/offer-atlas-quick-start.md) · [云同步指南](docs/cloud-sync-guide-zh.md)
 
+![OfferAtlas 总览与投递管理界面](docs/assets/offer-atlas-dashboard.png)
+
 ## 从岗位到 Offer
 
 | 你正在做什么 | OfferAtlas 如何帮助你 |
@@ -17,6 +19,8 @@
 | 回看秋招进展 | 总览集中展示投递数量、笔试与测评、各轮面试推进和 Offer 状态；统计数字可直接跳转到对应记录。 |
 | 切换电脑继续使用 | 连接自己的 Gitee 账号后，岗位、投递、附件和简历可在多台 Windows 电脑间自动同步，也可随时手动同步。 |
 | 需要安心整理数据 | 完整备份支持恢复；投递镜像可直接用 Excel、WPS 或 LibreOffice 查看，方便留存或分享。 |
+
+![OfferAtlas 从岗位、流程到日历和简历的关联](docs/assets/offer-atlas-workflow.png)
 
 ## 使用教程
 
