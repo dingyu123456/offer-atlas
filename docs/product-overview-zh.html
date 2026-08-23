@@ -1,0 +1,351 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="color-scheme" content="light" />
+  <title>OfferAtlas 产品导览</title>
+  <style>
+    :root {
+      --canvas: #f5f6f3;
+      --surface: #ffffff;
+      --surface-soft: #f8f9f7;
+      --ink: #17302d;
+      --muted: #6d7b79;
+      --faint: #98a4a2;
+      --line: #dfe5df;
+      --teal: #0f766e;
+      --teal-soft: #e1f2ed;
+      --blue: #3c6d9c;
+      --blue-soft: #eaf1f8;
+      --amber: #a66c20;
+      --amber-soft: #fbf0dd;
+      --green: #387353;
+      --green-soft: #e7f3ea;
+      --rose: #aa4f54;
+      --rose-soft: #f9e9e9;
+      --slate: #657474;
+      --slate-soft: #edf0ee;
+    }
+
+    * { box-sizing: border-box; }
+    html { background: var(--canvas); }
+    body {
+      min-width: 320px;
+      margin: 0;
+      color: var(--ink);
+      background: var(--canvas);
+      font-family: "Segoe UI", "Microsoft YaHei", system-ui, sans-serif;
+      font-synthesis: none;
+      text-rendering: optimizeLegibility;
+    }
+
+    .shell { width: min(1180px, calc(100% - 40px)); margin: 0 auto; padding: 28px 0 60px; }
+    .topbar { display: flex; align-items: center; justify-content: space-between; gap: 18px; margin-bottom: 28px; }
+    .brand { display: flex; align-items: center; gap: 11px; }
+    .brand-mark {
+      width: 36px; height: 36px; display: grid; place-items: center; border-radius: 7px;
+      color: #fff; background: var(--teal); box-shadow: 0 2px 4px rgba(15, 70, 64, .14);
+    }
+    .brand-mark svg { width: 19px; height: 19px; fill: none; stroke: currentColor; stroke-linecap: round; stroke-linejoin: round; stroke-width: 1.8; }
+    .brand > div > strong { display: block; font-size: 15px; line-height: 1.2; }
+    .brand > div > span { display: block; margin-top: 3px; color: var(--faint); font-size: 10px; }
+    .document-tag { padding: 6px 9px; border: 1px solid #d4e4de; border-radius: 5px; color: #39736b; background: #f8fcfa; font-size: 11px; font-weight: 700; }
+
+    .intro { display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(280px, .8fr); gap: 16px; margin-bottom: 16px; }
+    .panel { overflow: hidden; border: 1px solid var(--line); border-radius: 7px; background: var(--surface); }
+    .intro-copy { min-height: 174px; padding: 28px 30px; }
+    .eyebrow { margin: 0 0 8px; color: var(--teal); font-size: 10px; font-weight: 800; }
+    h1, h2, p { margin-top: 0; }
+    h1 { margin-bottom: 12px; font-size: 28px; line-height: 1.25; letter-spacing: 0; }
+    h2 { margin-bottom: 0; color: #273f39; font-size: 14px; line-height: 1.3; }
+    .intro-copy > p:last-child { max-width: 610px; margin-bottom: 0; color: var(--muted); font-size: 13px; line-height: 1.8; }
+    .intro-side { display: grid; align-content: center; gap: 17px; padding: 24px; background: #fcfefc; }
+    .side-row { display: flex; align-items: flex-start; gap: 11px; }
+    .side-icon { width: 30px; height: 30px; display: grid; place-items: center; flex: 0 0 30px; border-radius: 6px; color: var(--teal); background: var(--teal-soft); font-size: 15px; font-weight: 800; }
+    .side-row:nth-child(2) .side-icon { color: var(--blue); background: var(--blue-soft); }
+    .side-row strong, .side-row span { display: block; }
+    .side-row strong { color: #344943; font-size: 12px; }
+    .side-row span { margin-top: 4px; color: #80908a; font-size: 10px; line-height: 1.45; }
+
+    .section-title { display: flex; align-items: baseline; justify-content: space-between; gap: 16px; min-height: 56px; padding: 0 20px; border-bottom: 1px solid #edf0ed; }
+    .section-title small { color: #8b9894; font-size: 10px; white-space: nowrap; }
+    .feature-panel { margin-bottom: 16px; }
+    .feature-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .feature { min-width: 0; min-height: 244px; padding: 22px; border-right: 1px solid #edf0ed; border-bottom: 1px solid #edf0ed; }
+    .feature:nth-child(2n) { border-right: 0; }
+    .feature:nth-last-child(-n + 2) { border-bottom: 0; }
+    .feature-header { display: flex; align-items: center; gap: 10px; }
+    .feature-icon { width: 32px; height: 32px; display: grid; place-items: center; flex: 0 0 32px; border-radius: 7px; color: #08766b; background: #e0f7f0; }
+    .feature-icon svg { width: 17px; height: 17px; fill: none; stroke: currentColor; stroke-linecap: round; stroke-linejoin: round; stroke-width: 1.8; }
+    .feature:nth-child(2) .feature-icon { color: #315f9e; background: #e9f2ff; }
+    .feature:nth-child(3) .feature-icon { color: #783698; background: #f9effd; }
+    .feature:nth-child(4) .feature-icon { color: #98600a; background: #fff5df; }
+    .feature:nth-child(5) .feature-icon { color: #19733d; background: #e7f7eb; }
+    .feature:nth-child(6) .feature-icon { color: #0f6d83; background: #e8f6f9; }
+    .feature-index { color: #91a09a; font-size: 9px; font-weight: 800; letter-spacing: .06em; }
+    .feature h3 { margin: 14px 0 0; color: #294139; font-size: 15px; line-height: 1.3; }
+    .feature > p { margin: 8px 0 0; color: #647870; font-size: 11px; line-height: 1.7; }
+    .feature-highlight { display: grid; grid-template-columns: 23px minmax(0, 1fr); gap: 9px; align-items: start; margin-top: 14px; padding: 11px 12px; border-left: 3px solid #77b8a7; background: #f4f9f6; }
+    .feature:nth-child(2) .feature-highlight { border-left-color: #8baed9; background: #f4f8fd; }
+    .feature:nth-child(3) .feature-highlight { border-left-color: #c49cda; background: #fbf6fd; }
+    .feature:nth-child(4) .feature-highlight { border-left-color: #e2b35c; background: #fffaf1; }
+    .feature:nth-child(5) .feature-highlight { border-left-color: #80c99c; background: #f3fcf5; }
+    .feature:nth-child(6) .feature-highlight { border-left-color: #76bdcc; background: #f2fafb; }
+    .feature-highlight i { width: 21px; height: 21px; display: grid; place-items: center; border-radius: 5px; color: #217260; background: #dff2ea; }
+    .feature-highlight i svg { width: 12px; height: 12px; fill: none; stroke: currentColor; stroke-linecap: round; stroke-linejoin: round; stroke-width: 2.2; }
+    .feature-highlight span { color: #315b4f; font-size: 10.5px; font-weight: 750; line-height: 1.6; }
+    .feature:nth-child(2) .feature-highlight i { color: #42719f; background: #e4effc; }
+    .feature:nth-child(3) .feature-highlight i { color: #805795; background: #f2e8f7; }
+    .feature:nth-child(4) .feature-highlight i { color: #97651a; background: #fff0cf; }
+    .feature:nth-child(5) .feature-highlight i { color: #34734b; background: #e2f4e7; }
+    .feature:nth-child(6) .feature-highlight i { color: #287587; background: #e2f3f6; }
+    .feature-tags { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 11px; }
+    .feature-tags span { min-height: 22px; display: inline-flex; align-items: center; padding: 0 7px; border: 1px solid #d7e4de; border-radius: 999px; color: #587369; background: #fbfdfc; font-size: 9px; font-weight: 700; }
+    .feature:nth-child(2) .feature-tags span { border-color: #c8d9ee; color: #496b98; background: #f7faff; }
+    .feature:nth-child(3) .feature-tags span { border-color: #dfc8e9; color: #79518b; background: #fcf8fd; }
+    .feature:nth-child(4) .feature-tags span { border-color: #efd8a8; color: #8b601d; background: #fffaf2; }
+    .feature:nth-child(5) .feature-tags span { border-color: #c3e2cc; color: #397352; background: #f7fcf8; }
+    .feature:nth-child(6) .feature-tags span { border-color: #bcdde3; color: #2c7080; background: #f6fbfc; }
+    .search-strip { display: grid; grid-template-columns: 34px minmax(0, 1fr) auto; align-items: center; gap: 11px; min-height: 62px; margin: 16px 20px 20px; padding: 0 13px; border: 1px solid #dce7e1; border-radius: 7px; background: #fbfdfb; }
+    .search-strip-icon { width: 26px; height: 26px; display: grid; place-items: center; border-radius: 6px; color: #08766b; background: #e0f7f0; }
+    .search-strip-icon svg { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-linecap: round; stroke-width: 2; }
+    .search-strip strong, .search-strip span { display: block; }
+    .search-strip strong { color: #385048; font-size: 11px; }
+    .search-strip span { margin-top: 3px; color: #84928d; font-size: 9px; }
+    .search-strip em { padding: 5px 7px; border: 1px solid #d5e3dc; border-radius: 5px; color: #587369; background: #fff; font-size: 9px; font-style: normal; font-weight: 700; white-space: nowrap; }
+    .object-flow { display: grid; grid-template-columns: repeat(5, minmax(136px, 1fr)); align-items: center; gap: 30px; padding: 20px; }
+    .object { position: relative; min-width: 0; min-height: 112px; padding: 16px; border: 1px solid #dfe6e1; border-radius: 6px; background: #fff; }
+    .object::before { position: absolute; top: 0; right: 0; left: 0; height: 5px; border-radius: 5px 5px 0 0; background: #30463f; content: ""; }
+    .object:not(:last-child)::after { position: absolute; z-index: 1; top: 50%; left: 100%; width: 30px; height: 1px; background: #cbd6d0; content: ""; }
+    .object:not(:last-child) .arrow { position: absolute; z-index: 2; top: calc(50% - 4px); right: -29px; width: 9px; height: 9px; border-top: 1px solid #9dab9f; border-right: 1px solid #9dab9f; transform: rotate(45deg); }
+    .object-kicker { display: block; color: #80908a; font-size: 9px; font-weight: 750; }
+    .object strong { display: block; overflow: hidden; margin-top: 7px; color: #254039; font-size: 14px; text-overflow: ellipsis; white-space: nowrap; }
+    .object span:not(.arrow) { display: block; margin-top: 7px; color: #899792; font-size: 10px; line-height: 1.45; }
+    .object.company::before, .object.application::before { background: var(--teal); }
+    .object.campaign::before { background: var(--blue); }
+    .object.position::before { background: #8864aa; }
+    .object.stage::before { background: var(--amber); }
+    .relation-note { margin: -2px 20px 20px; padding: 9px 11px; border-left: 3px solid #76b7a5; color: #687a73; background: #f4f9f6; font-size: 10px; line-height: 1.6; }
+    .relation-note b { color: #2c6f63; }
+
+    .workflow-section { margin-top: 16px; }
+    .workflow-heading { min-height: 70px; display: flex; flex-direction: column; align-items: flex-start; justify-content: center; gap: 4px; padding: 0 20px; border-bottom: 1px solid #edf0ed; }
+    .workflow-heading h2 { margin: 0; }
+    .workflow-heading small { color: #82918c; font-size: 10px; }
+    .application-layout { padding: 16px; background: #f8faf8; }
+    .application-panel { overflow: hidden; border: 1px solid var(--line); border-radius: 7px; background: var(--surface); }
+    .application-header { min-height: 64px; display: flex; align-items: center; justify-content: space-between; gap: 14px; padding: 0 20px; border-bottom: 1px solid #edf0ed; }
+    .application-header > div { min-width: 0; }
+    .application-header strong, .application-header span { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .application-header strong { color: #273f39; font-size: 14px; }
+    .application-header span { margin-top: 4px; color: #8a9893; font-size: 10px; }
+    .status-badge { display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-height: 25px; padding: 0 9px; border: 1px solid currentColor; border-radius: 999px; box-shadow: inset 0 2px 0 color-mix(in srgb, currentColor 20%, transparent); font-size: 10px; font-weight: 750; line-height: 1; white-space: nowrap; }
+    .status-badge i { width: 5px; height: 5px; border-radius: 50%; background: currentColor; }
+    .active, .scheduled { color: #08766b; background: #e0f7f0; }
+    .passed { color: #19733d; background: #e7f7eb; }
+    .failed { color: #b42235; background: #fff0f1; }
+
+    .flow-help { display: flex; align-items: center; gap: 7px; margin: 14px 20px 0; color: #7c8b85; font-size: 10px; }
+    .flow-help::before { width: 6px; height: 6px; border-radius: 50%; background: var(--teal); content: ""; }
+    /* Mirrors the app's StageStrip: compact node chip, type glyph, status and time. */
+    .stage-strip { display: flex; align-items: center; min-width: 0; overflow-x: auto; padding: 15px 20px 18px; scrollbar-width: thin; scrollbar-color: #c8d4ce transparent; }
+    .stage-chip-wrap { display: flex; align-items: center; flex: 0 0 auto; }
+    .stage-chip { display: flex; align-items: center; min-width: 146px; max-width: 196px; gap: 6px; padding: 5px 7px; border: 1px solid #dde5df; border-radius: 9px; background: #fbfdfc; box-shadow: 0 1px 2px rgba(34, 71, 60, .04); }
+    .stage-chip > span:last-child { min-width: 0; }
+    .stage-chip strong, .stage-chip small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .stage-chip strong { max-width: 145px; color: #3e554d; font-size: 10px; font-weight: 650; }
+    .stage-chip small { margin-top: 3px; color: #7d9088; font-size: 9px; }
+    .stage-chip.scheduled { border-color: #69c6b3; background: #f0fcf8; box-shadow: inset 0 2px 0 #0e766d; }
+    .stage-chip.scheduled small { color: #087269; font-weight: 700; }
+    .stage-chip.passed { border-color: #88d0a0; background: #f2fcf5; box-shadow: inset 0 2px 0 #1f9254; }
+    .stage-chip.passed small { color: #147a46; font-weight: 700; }
+    .stage-chip.failed { border-color: #ef9a9d; background: #fff4f3; box-shadow: inset 0 2px 0 #d92d3a; }
+    .stage-chip.failed small { color: #b4232e; font-weight: 750; }
+    .stage-glyph { width: 23px; height: 23px; display: grid; place-items: center; flex: 0 0 23px; border: 1px solid transparent; border-radius: 50%; color: #336d96; background: var(--blue-soft); }
+    .stage-glyph svg { width: 11px; height: 11px; stroke: currentColor; }
+    .stage-glyph.written-test { color: #815592; background: #f3eafa; }
+    .stage-glyph.interview { color: #156e67; background: var(--teal-soft); }
+    .stage-chip.passed .stage-glyph { color: #147a46; border-color: #8ad5a6; background: #dcf8e7; }
+    .stage-chip.failed .stage-glyph { color: #b4232e; border-color: #f1a6a8; background: #fee4e2; }
+    .stage-chip-line { width: 18px; height: 1px; flex: 0 0 18px; margin: 0 4px; background: #c7d7ce; }
+    .stage-chip-line.passed { background: #79bf91; }
+    .stage-chip-line.scheduled { background: #71c9b6; }
+    .stage-chip-line.failed { background: #e48a8e; }
+
+    .workflow-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; padding: 0 16px 16px; background: #f8faf8; }
+    .workflow-action { min-width: 0; padding: 15px 16px; border: 1px solid #dfe7e2; border-radius: 7px; background: #fff; }
+    .workflow-action-header { display: flex; align-items: center; gap: 8px; }
+    .workflow-action-header i { width: 25px; height: 25px; display: grid; place-items: center; border-radius: 6px; color: #08766b; background: #e0f7f0; font-size: 11px; font-style: normal; font-weight: 800; }
+    .workflow-action.system .workflow-action-header i { color: #315f9e; background: #e9f2ff; }
+    .workflow-action h2 { margin: 0; color: #2d443d; font-size: 12px; }
+    .workflow-action p { margin: 7px 0 0; color: #73857e; font-size: 10px; line-height: 1.65; }
+    .workflow-action p b { color: #2d6f63; }
+    .workflow-action.system p b { color: #38649a; }
+    .workflow-types { display: flex; align-items: center; gap: 14px; padding: 16px 20px 18px; border-top: 1px solid #edf0ed; }
+    .workflow-types-copy { width: 148px; flex: 0 0 148px; }
+    .workflow-types-copy strong, .workflow-types-copy span { display: block; }
+    .workflow-types-copy strong { color: #344a43; font-size: 11px; }
+    .workflow-types-copy span { margin-top: 4px; color: #8a9893; font-size: 9px; line-height: 1.35; }
+    .catalog { display: flex; flex-wrap: wrap; gap: 7px; min-width: 0; }
+    .catalog span { min-height: 25px; display: inline-flex; align-items: center; padding: 0 9px; border: 1px solid #d6e1dc; border-radius: 999px; color: #49645c; background: #f8fbf9; font-size: 10px; font-weight: 700; }
+    .catalog span:nth-child(3n + 1) { border-color: #d7b8e4; color: #79478c; background: #fbf5fd; }
+    .catalog span:nth-child(3n + 2) { border-color: #9bd9cc; color: #086b62; background: #effbf7; }
+    .catalog span:nth-child(3n) { border-color: #ead3a9; color: #895a18; background: #fffaf1; }
+    @media (max-width: 840px) {
+      .intro, .workflow-actions { grid-template-columns: 1fr; }
+      .object-flow { grid-template-columns: 1fr; gap: 9px; }
+      .object { min-height: 84px; }
+      .object:not(:last-child)::after { top: auto; right: auto; bottom: -9px; left: 50%; width: 1px; height: 9px; }
+      .object:not(:last-child) .arrow { top: auto; right: auto; bottom: -7px; left: calc(50% - 4px); transform: rotate(135deg); }
+    }
+    @media (max-width: 720px) {
+      .shell { width: min(100% - 24px, 1180px); padding-top: 14px; }
+      .topbar { margin-bottom: 16px; }
+      .intro-copy { min-height: 0; padding: 22px 18px; }
+      .intro-side { padding: 18px; }
+      h1 { font-size: 24px; }
+      .section-title, .application-header { padding-right: 14px; padding-left: 14px; }
+      .section-title small { display: none; }
+      .feature-grid { grid-template-columns: 1fr; }
+      .feature, .feature:nth-child(2n), .feature:nth-last-child(-n + 2) { min-height: 0; border-top: 1px solid #edf0ed; border-right: 0; border-bottom: 0; }
+      .feature:first-child { border-top: 0; }
+      .search-strip { grid-template-columns: 30px minmax(0, 1fr); margin-right: 14px; margin-left: 14px; }
+      .search-strip em { display: none; }
+      .object-flow { padding: 14px; }
+      .relation-note { margin: -2px 14px 14px; }
+      .stage-strip { padding-right: 14px; padding-left: 14px; }
+      .flow-help { margin-right: 14px; margin-left: 14px; }
+      .stage-chip { min-width: 136px; }
+      .workflow-heading { padding-right: 14px; padding-left: 14px; }
+      .application-layout { padding: 14px; }
+      .workflow-actions { padding: 0 14px 14px; }
+      .workflow-types { align-items: flex-start; flex-direction: column; gap: 10px; padding-right: 14px; padding-left: 14px; }
+      .workflow-types-copy { width: auto; flex-basis: auto; }
+    }
+  </style>
+</head>
+<body>
+  <main class="shell">
+    <header class="topbar">
+      <div class="brand">
+        <span class="brand-mark" aria-hidden="true"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="m15.5 8.5-2 5-5 2 2-5 5-2Z"/></svg></span>
+        <div><strong>OfferAtlas</strong><span>秋招投递记录工具</span></div>
+      </div>
+      <span class="document-tag">产品导览</span>
+    </header>
+
+    <section class="intro">
+      <div class="panel intro-copy">
+        <p class="eyebrow">你的投递信息，清晰地留在本机</p>
+        <h1>先收录机会，再推进真实流程。</h1>
+        <p>先收下感兴趣的岗位；真正投递后，按照实际通知逐步记录笔试、面试与 Offer。每一条投递都能按自己的节奏推进。</p>
+      </div>
+      <aside class="panel intro-side" aria-label="产品原则">
+        <div class="side-row"><i class="side-icon">01</i><div><strong>机会与投递分开</strong><span>待投递岗位不会被误记为进行中的投递。</span></div></div>
+        <div class="side-row"><i class="side-icon">02</i><div><strong>流程跟着实际进展走</strong><span>收到通知再补充节点，结果与顺序随时可调整。</span></div></div>
+      </aside>
+    </section>
+
+    <section class="panel feature-panel">
+      <div class="section-title"><h2>核心功能</h2><small>从发现机会到安全恢复的完整闭环</small></div>
+      <div class="feature-grid">
+        <article class="feature">
+          <div class="feature-header"><i class="feature-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg></i><span class="feature-index">01 / 总览</span></div>
+          <h3>投递总览</h3>
+          <p>一打开就能看到总投递、进行中、已通过、未通过，以及笔试、测评和各轮面试的情况。快速收录和待办提醒也都在这里。</p>
+          <div class="feature-highlight"><i aria-hidden="true"><svg viewBox="0 0 24 24"><path d="m5 12 4 4L19 6"/></svg></i><span>想看哪一类，就直接点进去查看对应投递，不用再自己翻表格。</span></div>
+          <div class="feature-tags"><span>投递状态统计</span><span>笔试与测评</span><span>面试分轮统计</span><span>待办提醒</span></div>
+        </article>
+        <article class="feature">
+          <div class="feature-header"><i class="feature-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M3 21h18M5 21V8l7-5 7 5v13M9 21v-6h6v6M9 10h.01M15 10h.01"/></svg></i><span class="feature-index">02 / 机会归档</span></div>
+          <h3>公司、批次与岗位管理</h3>
+          <p>把公司、招聘批次和岗位分开管理：公告与时间、岗位编号和地点、优先级与链接各自清楚，后续查找不会混乱。</p>
+          <div class="feature-highlight"><i aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M3 12h18M12 3v18"/></svg></i><span>岗位 JD、官网页面、群通知等截图和文件，都可以集中收在岗位详情里。</span></div>
+          <div class="feature-tags"><span>公司 → 批次 → 岗位</span><span>招聘公告</span><span>截图与附件</span><span>优先级</span></div>
+        </article>
+        <article class="feature">
+          <div class="feature-header"><i class="feature-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 3v18M3 12h18"/><path d="M5 5h5v5H5zM14 5h5v5h-5zM5 14h5v5H5zM14 14h5v5h-5z"/></svg></i><span class="feature-index">03 / 快速收录</span></div>
+          <h3>把“看到机会”快速放进系统</h3>
+          <p>看到新机会时，一次填写公司、招聘批次和岗位即可收录。已有的公司或批次可以直接选用，信息不完整也能先记下来，之后再补。</p>
+          <div class="feature-highlight"><i aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 3v12M7 10l5 5 5-5M5 21h14"/></svg></i><span>复制一张 JD 截图，直接粘贴进来；上传后马上能看到缩略图，确认无误再保存。</span></div>
+          <div class="feature-tags"><span>一次收录</span><span>直接选用已有信息</span><span>粘贴截图</span><span>缩略预览</span></div>
+        </article>
+        <article class="feature">
+          <div class="feature-header"><i class="feature-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="4" y="3" width="16" height="18" rx="2"/><path d="M8 8h8M8 12h8M8 16h5"/></svg></i><span class="feature-index">04 / 投递推进</span></div>
+          <h3>投递记录与动态流程</h3>
+          <p>所有已投递岗位集中在一张清晰的列表中，可按进展、环节和结果筛选，也可以按优先级或投递时间排序。进入详情就能查看并更新完整过程。</p>
+          <div class="feature-highlight"><i aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M3 12h18M15 6l6 6-6 6"/></svg></i><span>每家公司要几轮，就记录几轮。流程会随着你的真实进展自然延长，投递状态也会同步更新。</span></div>
+          <div class="feature-tags"><span>统一投递列表</span><span>组合筛选</span><span>节点可排序</span><span>状态自动联动</span></div>
+        </article>
+        <article class="feature">
+          <div class="feature-header"><i class="feature-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M16 3v4M8 3v4M3 10h18M8 14h.01M12 14h.01M16 14h.01"/></svg></i><span class="feature-index">05 / 时间安排</span></div>
+          <h3>日历与待办执行视图</h3>
+          <p>为笔试、面试或结果通知填好时间，它们就会出现在日历和待办里。周视图和月视图帮助安排时间；今天、未来 7 天、逾期和等待结果则帮助聚焦下一步。</p>
+          <div class="feature-highlight"><i aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 12h16M14 6l6 6-6 6"/></svg></i><span>时间只需填写一次。日历和待办会同步提醒，点开就能回到对应投递。</span></div>
+          <div class="feature-tags"><span>周 / 月日历</span><span>结果提醒</span><span>等待结果</span><span>回到投递</span></div>
+        </article>
+        <article class="feature">
+          <div class="feature-header"><i class="feature-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><ellipse cx="12" cy="5" rx="8" ry="3"/><path d="M4 5v7c0 1.7 3.6 3 8 3s8-1.3 8-3V5M4 12v7c0 1.7 3.6 3 8 3s8-1.3 8-3v-7"/></svg></i><span class="feature-index">06 / 数据安全</span></div>
+          <h3>安全镜像、完整备份与恢复</h3>
+          <p>投递信息保存在本机。日常可以直接打开安全镜像查看；在大批量修改前，也可以创建一份完整备份，把岗位附件一并保存。</p>
+          <div class="feature-highlight"><i aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 3a7 7 0 1 0 7 7M12 7v5l3 2M12 3v4h4"/></svg></i><span>平时看镜像，出现误操作时用完整备份恢复。恢复前会先保留当前数据，更安心。</span></div>
+          <div class="feature-tags"><span>本机保存</span><span>可直接查看</span><span>附件一并备份</span><span>安全恢复</span></div>
+        </article>
+      </div>
+      <div class="search-strip">
+        <i class="search-strip-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="6"/><path d="m16 16 5 5"/></svg></i>
+        <div><strong>全局搜索贯穿整个记录库</strong><span>在顶部直接检索公司、招聘批次、岗位名称、岗位编号，同时查看匹配的岗位与投递记录。</span></div>
+        <em>Enter 搜索</em>
+      </div>
+    </section>
+
+    <section class="panel">
+      <div class="section-title"><h2>信息如何组织</h2><small>从招聘信息到个人实际进展</small></div>
+      <div class="object-flow" aria-label="公司到流程节点的层级关系">
+        <div class="object company"><span class="object-kicker">公司信息</span><strong>公司</strong><span>行业、官网与备注</span><i class="arrow" aria-hidden="true"></i></div>
+        <div class="object campaign"><span class="object-kicker">招聘活动</span><strong>招聘批次</strong><span>公告、时间与流程参考</span><i class="arrow" aria-hidden="true"></i></div>
+        <div class="object position"><span class="object-kicker">目标岗位</span><strong>岗位</strong><span>JD、优先级、链接与截图</span><i class="arrow" aria-hidden="true"></i></div>
+        <div class="object application"><span class="object-kicker">我的投递</span><strong>投递记录</strong><span>日期、渠道与简历版本</span><i class="arrow" aria-hidden="true"></i></div>
+        <div class="object stage"><span class="object-kicker">每一步进展</span><strong>流程节点</strong><span>按通知逐步补充</span></div>
+      </div>
+      <p class="relation-note"><b>关系很简单：</b>一个招聘批次可以包含多个岗位；一个岗位通常对应一条投递；一条投递可以逐步补充多个流程节点。</p>
+    </section>
+
+    <section class="panel workflow-section">
+      <div class="workflow-heading"><h2>流程如何工作</h2><small>只记录真实进展，其余由系统自动整理</small></div>
+      <div class="application-layout">
+        <article class="application-panel">
+          <div class="application-header">
+            <div><strong>腾讯 · 2027 届秋招 · 后端开发工程师</strong><span>投递于 08-18 · 后端开发 v3</span></div>
+            <span class="status-badge active"><i></i>进行中</span>
+          </div>
+          <p class="flow-help">收到通知或拿到结果时，再补充对应节点</p>
+          <div class="stage-strip" aria-label="投递流程示例">
+            <div class="stage-chip-wrap"><span class="stage-chip passed"><span class="stage-glyph written-test" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke-width="2"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg></span><span><strong>测评 · 在线能力测评</strong><small>通过 · 08-22 19:00</small></span></span><i class="stage-chip-line passed" aria-hidden="true"></i></div>
+            <div class="stage-chip-wrap"><span class="stage-chip passed"><span class="stage-glyph written-test" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6M8 13h8M8 17h8"/></svg></span><span><strong>笔试 · 算法与专业能力</strong><small>通过 · 08-25 19:00</small></span></span><i class="stage-chip-line passed" aria-hidden="true"></i></div>
+            <div class="stage-chip-wrap"><span class="stage-chip passed"><span class="stage-glyph interview" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke-width="2"><path d="M21 11.5a8.4 8.4 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.4 8.4 0 0 1-3.8-.9L3 21l1.9-5.7A8.4 8.4 0 0 1 4 11.5 8.5 8.5 0 0 1 8.7 3.9 8.4 8.4 0 0 1 12.5 3h.5a8.5 8.5 0 0 1 8 8z"/></svg></span><span><strong>一面 · 技术交流</strong><small>通过 · 08-29 14:00</small></span></span><i class="stage-chip-line passed" aria-hidden="true"></i></div>
+            <div class="stage-chip-wrap"><span class="stage-chip scheduled"><span class="stage-glyph interview" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke-width="2"><path d="M21 11.5a8.4 8.4 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.4 8.4 0 0 1-3.8-.9L3 21l1.9-5.7A8.4 8.4 0 0 1 4 11.5 8.5 8.5 0 0 1 8.7 3.9 8.4 8.4 0 0 1 12.5 3h.5a8.5 8.5 0 0 1 8 8z"/></svg></span><span><strong>二面 · 业务面谈</strong><small>已预约 · 09-03 10:30</small></span></span></div>
+          </div>
+        </article>
+      </div>
+      <div class="workflow-actions">
+        <article class="workflow-action">
+          <div class="workflow-action-header"><i>01</i><h2>你只需要更新节点</h2></div>
+          <p>不预设轮数。每次新增已收到通知的环节，并填写时间、节点状态和必要备注；流程自然向后延伸。</p>
+        </article>
+        <article class="workflow-action system">
+          <div class="workflow-action-header"><i>02</i><h2>系统自动整理后续信息</h2></div>
+          <p>安排时间会同步到日历与待办；节点结果会更新投递状态。<b>Offer 通过即为已通过，最后一步未通过即结束。</b></p>
+        </article>
+      </div>
+      <div class="workflow-types">
+        <div class="workflow-types-copy"><strong>这些环节会进入总览</strong><span>用于笔试、测评和各轮面试统计</span></div>
+        <div class="catalog" aria-label="系统节点类型">
+          <span>笔试</span><span>测评</span><span>AI 面</span><span>一面</span><span>二面</span><span>三面</span><span>四面</span><span>HR 面</span><span>Offer</span>
+        </div>
+      </div>
+    </section>
+  </main>
+</body>
+</html>

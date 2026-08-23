@@ -1,0 +1,30 @@
+# Go
+*.exe
+*.test
+*.out
+bin/
+
+# Wails
+build/bin/
+frontend/dist/
+frontend/wailsjs/
+frontend/*.js
+frontend/*.d.ts
+frontend/*.tsbuildinfo
+frontend/package.json.md5
+
+# Frontend
+frontend/node_modules/
+.vite/
+
+# Local application data and backups
+data/
+*.db
+*.db-shm
+*.db-wal
+
+# Editors and operating systems
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
