@@ -43,6 +43,7 @@ export interface BackupCenter { dataDirectory: string; backupDirectory: string; 
 export interface RestoreResult { restoredBackup: BackupRecord; safetyBackup: BackupRecord; }
 export interface DeleteInput { entityType: DeletionTargetType; id: string; confirmationText: string; }
 export interface DeletionPreview { entityType: DeletionTargetType; entityName: string; confirmationText: string; campaignCount: number; positionCount: number; applicationCount: number; stageCount: number; }
+export interface AppUpdate { currentVersion: string; latestVersion: string; available: boolean; state: "idle" | "checking" | "available" | "downloading" | "downloaded" | "installing" | "failed"; releaseNotes: string; publishedAt: string; releaseUrl: string; assetName: string; assetSize: number; downloadedBytes: number; message: string; checkedAt: string; }
 
 interface BackendApp {
   Dashboard(): Promise<Dashboard>; Health(): Promise<Health>; ListCompanies(): Promise<Company[]>; SaveCompany(input: CompanyInput): Promise<Company>;
@@ -60,6 +61,7 @@ interface BackendApp {
   SaveApplicationStage(input: ApplicationStageInput): Promise<ApplicationStage>; DeleteApplicationStage(stageId: string): Promise<void>; ReorderApplicationStages(applicationId: string, stageIds: string[]): Promise<ApplicationStage[]>;
   CreateBackup(): Promise<string>; BackupCenter(): Promise<BackupCenter>; RestoreBackup(id: string, confirmation: string): Promise<RestoreResult>; OpenBackupLocation(kind: string): Promise<void>;
   CloudSyncStatus(): Promise<CloudSyncStatus>; ConnectGitee(token: string): Promise<GiteeConnectionPreview>; PendingGiteeConnectionPreview(): Promise<GiteeConnectionPreview>; ConfirmGiteeConnection(mode: "upload" | "download" | "merge"): Promise<CloudSyncStatus>; SyncGiteeNow(): Promise<CloudSyncStatus>; DisconnectGitee(): Promise<void>; DeleteGiteeSyncRepositories(): Promise<string[]>; ListSyncConflicts(): Promise<SyncConflict[]>; ResolveSyncConflict(id: string, choice: "local" | "remote"): Promise<void>;
+  AppUpdateStatus(): Promise<AppUpdate>; CheckForAppUpdate(): Promise<AppUpdate>; DownloadAppUpdate(): Promise<AppUpdate>; InstallDownloadedUpdate(): Promise<void>;
 }
 
 declare global { interface Window { go?: { main?: { App?: BackendApp } }; } }
@@ -79,4 +81,5 @@ export const api = {
   stageTypes: () => backend().ListStageTypes(), saveStageType: (input: StageTypeInput) => backend().SaveStageType(input), deleteStageType: (id: StageType) => backend().DeleteStageType(id),
   backup: () => backend().CreateBackup(), backupCenter: () => backend().BackupCenter(), restoreBackup: (id: string, confirmation: string) => backend().RestoreBackup(id, confirmation), openBackupLocation: (kind: "data" | "backups" | "mirror") => backend().OpenBackupLocation(kind),
   cloudSyncStatus: () => backend().CloudSyncStatus(), connectGitee: (token: string) => backend().ConnectGitee(token), pendingGiteeConnectionPreview: () => backend().PendingGiteeConnectionPreview(), confirmGiteeConnection: (mode: "upload" | "download" | "merge") => backend().ConfirmGiteeConnection(mode), syncGiteeNow: () => backend().SyncGiteeNow(), disconnectGitee: () => backend().DisconnectGitee(), deleteGiteeSyncRepositories: () => backend().DeleteGiteeSyncRepositories(), syncConflicts: () => backend().ListSyncConflicts(), resolveSyncConflict: (id: string, choice: "local" | "remote") => backend().ResolveSyncConflict(id, choice),
+  appUpdateStatus: () => backend().AppUpdateStatus(), checkForAppUpdate: () => backend().CheckForAppUpdate(), downloadAppUpdate: () => backend().DownloadAppUpdate(), installDownloadedUpdate: () => backend().InstallDownloadedUpdate(),
 };

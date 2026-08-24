@@ -60,6 +60,7 @@ import {
 import {
   api,
   Application,
+	AppUpdate,
   ApplicationDetail,
   ApplicationInput,
   ApplicationPage,
@@ -117,6 +118,7 @@ type DialogName =
 	| "resume"
   | "stage"
   | "delete"
+	| "update"
   | null;
 type DeletionTarget = Pick<DeleteInput, "entityType" | "id"> & { name: string };
 type ProtectedAction = {
@@ -307,6 +309,7 @@ export default function App() {
   const [dashboard, setDashboard] = useState<Dashboard>(emptyDashboard);
   const [health, setHealth] = useState<Health | null>(null);
   const [cloudSync, setCloudSync] = useState<CloudSyncStatus | null>(null);
+	const [appUpdate, setAppUpdate] = useState<AppUpdate | null>(null);
   const [cloudSyncRevision, setCloudSyncRevision] = useState(0);
   const cloudSyncSnapshot = useRef<Pick<CloudSyncStatus, "activity" | "state" | "lastSuccessAt"> | null>(null);
   const [companies, setCompanies] = useState<Company[]>([]);
@@ -366,6 +369,7 @@ export default function App() {
   const [toast, setToast] = useState("");
   const [closingForSync, setClosingForSync] = useState(false);
   const [closeSyncMessage, setCloseSyncMessage] = useState("");
+	const [closingForUpdate, setClosingForUpdate] = useState(false);
 
   useEffect(() => {
     const removeClosing = EventsOn("cloud-sync:closing", (message: string) => {
@@ -374,12 +378,26 @@ export default function App() {
     });
     const removeFailure = EventsOn("cloud-sync:close-failed", (message: string) => {
       setClosingForSync(false);
+		setClosingForUpdate(false);
       setCloseSyncMessage("");
       setToast(message);
     });
+		const removeUpdateClosing = EventsOn("app-update:closing", (message: string) => {
+			setClosingForSync(true);
+			setClosingForUpdate(true);
+			setCloseSyncMessage(message);
+		});
+		const removeUpdateFailure = EventsOn("app-update:install-failed", (message: string) => {
+			setClosingForSync(false);
+			setClosingForUpdate(false);
+			setCloseSyncMessage("");
+			setToast(message);
+		});
     return () => {
       removeClosing();
       removeFailure();
+		removeUpdateClosing();
+		removeUpdateFailure();
     };
   }, []);
 
@@ -526,6 +544,21 @@ export default function App() {
 		const timer = window.setInterval(refreshCloudSync, 1_000);
     return () => window.clearInterval(timer);
   }, [closingForSync]);
+
+	useEffect(() => {
+		let active = true;
+		const refreshUpdate = () => {
+			void api.appUpdateStatus().then((next) => {
+				if (active) setAppUpdate(next);
+			}).catch(() => undefined);
+		};
+		refreshUpdate();
+		const timer = window.setInterval(refreshUpdate, 600);
+		return () => {
+			active = false;
+			window.clearInterval(timer);
+		};
+	}, []);
 
   const notify = (message: string) => {
     setToast(message);
@@ -779,6 +812,15 @@ export default function App() {
               </div>
             </div>
             <div className="topbar-actions">
+				<button
+					className={`app-update-entry ${appUpdate?.available ? "available" : ""} ${appUpdate?.state === "checking" || appUpdate?.state === "downloading" ? "busy" : ""}`}
+					type="button"
+					title={appUpdate?.available ? `发现 ${appUpdate.latestVersion}，查看更新` : "检查应用更新"}
+					onClick={() => setDialog("update")}
+				>
+					<RotateCcw size={14} />
+					<span>{appUpdate?.available ? `发现 v${appUpdate.latestVersion}` : "应用更新"}</span>
+				</button>
               <div className="search-box" role="search">
                 <Search className="search-leading" size={15} />
                 <input
@@ -1226,6 +1268,13 @@ export default function App() {
             onDeleted={() => void finishDeletion()}
           />
         )}
+		{dialog === "update" && (
+			<UpdateDialog
+				status={appUpdate}
+				onClose={() => setDialog(null)}
+				onChanged={setAppUpdate}
+			/>
+		)}
         {managingStageTypes && (
           <StageTypesDialog
             items={stageTypes}
@@ -1262,16 +1311,16 @@ export default function App() {
             onClose={() => setProtectedAction(null)}
           />
         )}
-        {closingForSync && (
+		{closingForSync && (
           <section className="safe-exit-overlay" role="status" aria-live="assertive" aria-label="正在安全退出">
             <div className="safe-exit-panel">
               <span className="safe-exit-icon" aria-hidden="true"><Cloud size={25} /></span>
               <div>
-                <p>数据安全</p>
-                <h2>正在安全退出</h2>
-                <strong>{cloudSyncCompactLabel(cloudSync)}</strong>
-                <span>{cloudSync?.message || closeSyncMessage || "正在确认本机更改是否已同步到 Gitee"}</span>
-                <small>完成后应用将自动关闭，请保持网络连接。</small>
+                <p>{closingForUpdate ? "应用更新" : "数据安全"}</p>
+                <h2>{closingForUpdate ? "正在完成更新" : "正在安全退出"}</h2>
+                <strong>{closingForUpdate ? "正在确认云端同步状态" : cloudSyncCompactLabel(cloudSync)}</strong>
+                <span>{closingForUpdate ? (closeSyncMessage || "正在准备安全重启") : (cloudSync?.message || closeSyncMessage || "正在确认本机更改是否已同步到 Gitee")}</span>
+                <small>{closingForUpdate ? "同步完成后将自动启动新版本，请保持网络连接。" : "完成后应用将自动关闭，请保持网络连接。"}</small>
               </div>
             </div>
           </section>
@@ -4372,6 +4421,146 @@ function Dialog({
         {children}
       </section>
     </div>
+  );
+}
+
+function updateSize(value: number) {
+  if (!value) return "";
+  if (value < 1024 * 1024) return `${Math.max(1, Math.ceil(value / 1024))} KB`;
+  return `${(value / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function UpdateDialog({
+  status,
+  onClose,
+  onChanged,
+}: {
+  status: AppUpdate | null;
+  onClose: () => void;
+  onChanged: (next: AppUpdate) => void;
+}) {
+  const [error, setError] = useState("");
+  const current = status || {
+    currentVersion: "",
+    latestVersion: "",
+    available: false,
+    state: "idle" as const,
+    releaseNotes: "",
+    publishedAt: "",
+    releaseUrl: "",
+    assetName: "",
+    assetSize: 0,
+    downloadedBytes: 0,
+    message: "正在读取更新状态",
+    checkedAt: "",
+  };
+  const busy = current.state === "checking" || current.state === "downloading" || current.state === "installing";
+  const progress = current.assetSize > 0
+    ? Math.min(100, Math.round((current.downloadedBytes / current.assetSize) * 100))
+    : 0;
+  const check = async () => {
+    if (busy) return;
+    setError("");
+    try {
+      onChanged(await api.checkForAppUpdate());
+    } catch (reason) {
+      setError(messageOf(reason));
+      void api.appUpdateStatus().then(onChanged).catch(() => undefined);
+    }
+  };
+  const download = async () => {
+    if (busy) return;
+    setError("");
+    try {
+      onChanged(await api.downloadAppUpdate());
+    } catch (reason) {
+      setError(messageOf(reason));
+      void api.appUpdateStatus().then(onChanged).catch(() => undefined);
+    }
+  };
+  const install = async () => {
+    if (busy) return;
+    setError("");
+    try {
+      await api.installDownloadedUpdate();
+    } catch (reason) {
+      setError(messageOf(reason));
+      void api.appUpdateStatus().then(onChanged).catch(() => undefined);
+    }
+  };
+  return (
+    <Dialog
+      title="应用更新"
+      subtitle="通过 GitHub Release 获取已校验的新版本。更新只替换应用程序，不会改动本地数据、附件、备份或云同步配置。"
+      kicker="Offer Atlas"
+      onClose={busy ? () => undefined : onClose}
+    >
+      <div className="update-dialog-body">
+        <section className={`update-summary update-${current.state}`}>
+          <span className="update-summary-icon" aria-hidden="true">
+            {busy ? <LoaderCircle size={20} /> : <BadgeCheck size={20} />}
+          </span>
+          <div>
+            <small>当前版本 v{current.currentVersion || "-"}</small>
+            <strong>
+              {current.available || current.state === "downloaded" || current.state === "installing"
+                ? `新版本 v${current.latestVersion}`
+                : current.state === "failed" ? "暂时无法检查更新" : "已是最新版本"}
+            </strong>
+            <span>{current.message}</span>
+          </div>
+          {current.publishedAt && <time>{textDate(current.publishedAt)} 发布</time>}
+        </section>
+
+        {current.state === "downloading" && (
+          <section className="update-download-progress" aria-live="polite">
+            <div><span>正在下载并校验</span><strong>{progress}%</strong></div>
+            <i><b style={{ width: `${progress}%` }} /></i>
+            <small>{updateSize(current.downloadedBytes)} / {updateSize(current.assetSize) || "正在获取大小"}</small>
+          </section>
+        )}
+
+        {current.available && (
+          <section className="update-release-notes">
+            <div className="update-section-heading">
+              <span>本次更新</span>
+              {current.releaseUrl && (
+                <button className="inline-text-button" type="button" onClick={() => void BrowserOpenURL(current.releaseUrl)}>
+                  <ExternalLink size={13} />
+                  完整发布说明
+                </button>
+              )}
+            </div>
+            <pre>{current.releaseNotes || "发布说明将在 GitHub Release 中提供。"}</pre>
+          </section>
+        )}
+
+        {current.state === "downloaded" && (
+          <section className="update-ready-note">
+            <ShieldCheck size={17} />
+            <div><strong>新版本已完成完整性校验</strong><span>开始更新后，会先等待正在进行的云同步和待同步修改安全完成，再自动启动新版本。</span></div>
+          </section>
+        )}
+        {error && <p className="form-error update-error">{error}</p>}
+        <div className="update-dialog-actions">
+          <button className="secondary-button" type="button" disabled={busy} onClick={() => void check()}>
+            {current.state === "checking" ? <LoaderCircle className="button-spinner" size={15} /> : <RotateCcw size={15} />}
+            检查更新
+          </button>
+          {current.state === "downloaded" ? (
+            <button className="primary-button" type="button" onClick={() => void install()}>
+              <ArrowDown size={15} />
+              安全重启并更新
+            </button>
+          ) : current.available && (
+            <button className="primary-button" type="button" disabled={busy} onClick={() => void download()}>
+              {current.state === "downloading" ? <LoaderCircle className="button-spinner" size={15} /> : <ArrowDown size={15} />}
+              下载新版本{current.assetSize ? `（${updateSize(current.assetSize)}）` : ""}
+            </button>
+          )}
+        </div>
+      </div>
+    </Dialog>
   );
 }
 

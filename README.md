@@ -4,7 +4,7 @@
 
 把岗位线索、投递记录、笔试面试、简历和资料集中到一处。无论是刚发现心仪岗位，还是在多轮流程中安排日程、回看进展，都能清楚知道下一步该做什么。
 
-[下载最新版](https://github.com/dingyu123456/offer-atlas/releases/latest) · [快速上手](docs/offer-atlas-quick-start.md) · [云同步指南](docs/cloud-sync-guide-zh.md)
+[下载最新版](https://github.com/dingyu123456/offer-atlas/releases/latest) · [快速上手](docs/offer-atlas-quick-start.md) · [云同步指南](docs/cloud-sync-guide-zh.md) · [更新说明](docs/app-update-guide-zh.md)
 
 ![OfferAtlas 核心功能](docs/assets/offer-atlas-features.png)
 
@@ -19,6 +19,7 @@
 | 回看秋招进展 | 总览集中展示投递数量、笔试与测评、各轮面试推进和 Offer 状态；统计数字可直接跳转到对应记录。 |
 | 切换电脑继续使用 | 连接自己的 Gitee 账号后，岗位、投递、附件和简历可在多台 Windows 电脑间自动同步，也可随时手动同步。 |
 | 需要安心整理数据 | 完整备份支持恢复；投递镜像可直接用 Excel、WPS 或 LibreOffice 查看，方便留存或分享。 |
+| 继续使用新版本 | 应用会自动检查 GitHub Release；发现新版后可查看更新内容、下载校验，并在云同步安全完成后自动重启更新。 |
 
 ## 一条清晰的投递路径
 
@@ -32,6 +33,7 @@ OfferAtlas 将一次求职过程拆成几个自然步骤：先留下岗位信息
 
 - [OfferAtlas 快速上手](docs/offer-atlas-quick-start.md)：从录入公司、招聘批次和岗位开始，介绍投递记录、流程节点、日历、待办、简历库以及数据备份等核心功能。
 - [Gitee 云同步使用指南](docs/cloud-sync-guide-zh.md)：介绍如何连接 Gitee、完成首次上传或下载、在多台电脑间同步，以及查看同步状态、处理失败和冲突。
+- [应用更新说明](docs/app-update-guide-zh.md)：介绍自动检查、手动检查、下载校验和更新时的安全退出规则。
 
 如果只想先了解日常使用流程，请从“快速上手”开始；准备在多台电脑之间使用时，再阅读“Gitee 云同步使用指南”。
 

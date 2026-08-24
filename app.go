@@ -19,11 +19,13 @@ import (
 
 // App exposes the application use cases to the Wails frontend.
 type App struct {
-	ctx        context.Context
-	store      *store.Store
-	closeMu    sync.Mutex
-	allowClose bool
-	closing    bool
+	ctx           context.Context
+	store         *store.Store
+	updater       *updateManager
+	closeMu       sync.Mutex
+	allowClose    bool
+	closing       bool
+	pendingUpdate *updateInstallPlan
 }
 
 const maxUploadedAttachmentBytes = 25 * 1024 * 1024
@@ -44,6 +46,33 @@ func (a *App) Startup(ctx context.Context) {
 		panic(fmt.Errorf("open application database: %w", err))
 	}
 	a.store = database
+	updater, err := newUpdateManager(filepath.Dir(dataPath))
+	if err != nil {
+		panic(fmt.Errorf("start update manager: %w", err))
+	}
+	a.updater = updater
+	go func() {
+		// Let the primary workspace render first. An automatic update check never
+		// interrupts work; it simply makes the header entry available when needed.
+		timer := time.NewTimer(4 * time.Second)
+		defer timer.Stop()
+		select {
+		case <-timer.C:
+			_, _ = a.updater.check(context.Background(), false)
+		case <-ctx.Done():
+			return
+		}
+		periodic := time.NewTicker(updateCheckInterval)
+		defer periodic.Stop()
+		for {
+			select {
+			case <-periodic.C:
+				_, _ = a.updater.check(context.Background(), false)
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
 }
 
 func (a *App) Shutdown(context.Context) {
@@ -57,7 +86,9 @@ func (a *App) Shutdown(context.Context) {
 // saved, then the app exits automatically only after Gitee catches up.
 func (a *App) BeforeClose(ctx context.Context) bool {
 	a.closeMu.Lock()
-	if a.allowClose || a.store == nil || !a.store.NeedsSyncBeforeClose() {
+	installingUpdate := a.pendingUpdate != nil
+	needsSync := a.store != nil && a.store.NeedsSyncBeforeClose()
+	if a.allowClose || (!installingUpdate && (a.store == nil || !needsSync)) {
 		a.closeMu.Unlock()
 		return false
 	}
@@ -67,14 +98,36 @@ func (a *App) BeforeClose(ctx context.Context) bool {
 	}
 	a.closing = true
 	a.closeMu.Unlock()
-	wailsruntime.EventsEmit(ctx, "cloud-sync:closing", "正在确认云端状态")
+	if installingUpdate {
+		wailsruntime.EventsEmit(ctx, "app-update:closing", "新版本已准备完成，正在确认云端同步状态")
+	} else {
+		wailsruntime.EventsEmit(ctx, "cloud-sync:closing", "正在确认云端状态")
+	}
 	go func() {
-		if err := a.store.SyncBeforeClose(context.Background()); err != nil {
-			wailsruntime.EventsEmit(ctx, "cloud-sync:close-failed", "同步未完成，应用保持打开："+err.Error())
+		// An update always runs this guarded check. A user could have made one
+		// final edit between clicking the update button and Wails requesting the
+		// close, so the preflight NeedsSyncBeforeClose result alone is not enough.
+		// Ordinary window closes retain their existing no-extra-work behaviour.
+		if needsSync || installingUpdate {
+			if err := a.store.SyncBeforeClose(context.Background()); err != nil {
+				a.handleCloseFailure(ctx, installingUpdate, err)
+				return
+			}
+		}
+		if installingUpdate {
 			a.closeMu.Lock()
-			a.closing = false
+			plan := a.pendingUpdate
 			a.closeMu.Unlock()
-			return
+			if plan == nil || a.updater == nil {
+				a.handleCloseFailure(ctx, true, fmt.Errorf("更新安装计划已丢失，请重新下载更新"))
+				return
+			}
+			wailsruntime.EventsEmit(ctx, "app-update:closing", "云端状态已确认，正在安全启动新版本")
+			if err := a.updater.launchInstaller(*plan); err != nil {
+				a.updater.cancelInstall(err)
+				a.handleCloseFailure(ctx, true, err)
+				return
+			}
 		}
 		a.closeMu.Lock()
 		a.allowClose = true
@@ -83,6 +136,70 @@ func (a *App) BeforeClose(ctx context.Context) bool {
 		wailsruntime.Quit(ctx)
 	}()
 	return true
+}
+
+func (a *App) handleCloseFailure(ctx context.Context, installingUpdate bool, err error) {
+	if installingUpdate {
+		if a.updater != nil {
+			a.updater.cancelInstall(err)
+		}
+		wailsruntime.EventsEmit(ctx, "app-update:install-failed", "更新未安装，应用保持打开："+err.Error())
+	} else {
+		wailsruntime.EventsEmit(ctx, "cloud-sync:close-failed", "同步未完成，应用保持打开："+err.Error())
+	}
+	a.closeMu.Lock()
+	a.closing = false
+	if installingUpdate {
+		a.pendingUpdate = nil
+	}
+	a.closeMu.Unlock()
+}
+
+// AppUpdateStatus returns the latest local update-check snapshot. It never
+// makes a network request, so the frontend can poll it while a package is
+// downloading to render accurate progress.
+func (a *App) AppUpdateStatus() (AppUpdate, error) {
+	if a.updater == nil {
+		return AppUpdate{}, fmt.Errorf("更新服务正在启动")
+	}
+	return a.updater.snapshot(), nil
+}
+
+func (a *App) CheckForAppUpdate() (AppUpdate, error) {
+	if a.updater == nil {
+		return AppUpdate{}, fmt.Errorf("更新服务正在启动")
+	}
+	return a.updater.check(a.ctx, true)
+}
+
+func (a *App) DownloadAppUpdate() (AppUpdate, error) {
+	if a.updater == nil {
+		return AppUpdate{}, fmt.Errorf("更新服务正在启动")
+	}
+	return a.updater.download(a.ctx)
+}
+
+// InstallDownloadedUpdate begins the same guarded exit path used by the
+// window close button. The helper starts only after unsynced Gitee changes are
+// confirmed, then waits for this process to exit before replacing the exe.
+func (a *App) InstallDownloadedUpdate() error {
+	if a.updater == nil {
+		return fmt.Errorf("更新服务正在启动")
+	}
+	plan, err := a.updater.prepareInstall()
+	if err != nil {
+		return err
+	}
+	a.closeMu.Lock()
+	if a.closing || a.pendingUpdate != nil {
+		a.closeMu.Unlock()
+		a.updater.cancelInstall(fmt.Errorf("应用正在退出，请稍候"))
+		return fmt.Errorf("应用正在退出，请稍候")
+	}
+	a.pendingUpdate = &plan
+	a.closeMu.Unlock()
+	wailsruntime.Quit(a.ctx)
+	return nil
 }
 
 func (a *App) Health() (domain.Health, error) {
