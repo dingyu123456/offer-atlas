@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -119,6 +120,51 @@ func TestUpdateDownloadFallsBackAfterDirectConnectionFailure(t *testing.T) {
 	status, err := manager.download(context.Background())
 	if err != nil || status.State != "downloaded" {
 		t.Fatalf("expected fallback download to succeed, status=%#v err=%v", status, err)
+	}
+}
+
+func TestUpdateCheckFallsBackFromSystemProxy(t *testing.T) {
+	payload := []byte("MZ Offer Atlas verified update")
+	digest := sha256.Sum256(payload)
+	var server *httptest.Server
+	server = httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		_, _ = fmt.Fprintf(writer, `{"tag_name":"v0.2.6","assets":[{"name":"OfferAtlas-windows-amd64.exe","browser_download_url":%q,"size":%d,"digest":"sha256:%s"}]}`,
+			server.URL+"/asset", len(payload), hex.EncodeToString(digest[:]))
+	}))
+	defer server.Close()
+	manager := testUpdateManager(t, server.URL)
+	manager.proxyResolver = func(*url.URL) (*url.URL, bool) {
+		return &url.URL{Scheme: "http", Host: "127.0.0.1:1"}, true
+	}
+	status, err := manager.check(context.Background(), true, true)
+	if err != nil || !status.Available {
+		t.Fatalf("expected direct fallback check to succeed, status=%#v err=%v", status, err)
+	}
+	if !strings.Contains(status.NetworkStatus, "已回退直连检查") {
+		t.Fatalf("expected proxy fallback status, got %q", status.NetworkStatus)
+	}
+}
+
+func TestUpdateDownloadFallsBackFromSystemProxy(t *testing.T) {
+	payload := []byte("MZ Offer Atlas verified update")
+	digest := sha256.Sum256(payload)
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		_, _ = writer.Write(payload)
+	}))
+	defer server.Close()
+	manager := testUpdateManager(t, server.URL)
+	manager.status = AppUpdate{CurrentVersion: "0.2.0", LatestVersion: "0.2.6", Available: true, State: "available", AssetName: "OfferAtlas-windows-amd64.exe", AssetSize: int64(len(payload))}
+	manager.assetURL = server.URL
+	manager.assetDigest = "sha256:" + hex.EncodeToString(digest[:])
+	manager.proxyResolver = func(*url.URL) (*url.URL, bool) {
+		return &url.URL{Scheme: "http", Host: "127.0.0.1:1"}, true
+	}
+	status, err := manager.download(context.Background())
+	if err != nil || status.State != "downloaded" {
+		t.Fatalf("expected direct fallback download to succeed, status=%#v err=%v", status, err)
+	}
+	if !strings.Contains(status.NetworkStatus, "已回退直连下载") {
+		t.Fatalf("expected proxy fallback status, got %q", status.NetworkStatus)
 	}
 }
 

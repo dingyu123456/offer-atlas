@@ -43,7 +43,7 @@ export interface BackupCenter { dataDirectory: string; backupDirectory: string; 
 export interface RestoreResult { restoredBackup: BackupRecord; safetyBackup: BackupRecord; }
 export interface DeleteInput { entityType: DeletionTargetType; id: string; confirmationText: string; }
 export interface DeletionPreview { entityType: DeletionTargetType; entityName: string; confirmationText: string; campaignCount: number; positionCount: number; applicationCount: number; stageCount: number; }
-export interface AppUpdate { currentVersion: string; latestVersion: string; available: boolean; state: "idle" | "checking" | "available" | "downloading" | "downloaded" | "installing" | "failed"; releaseNotes: string; publishedAt: string; releaseUrl: string; assetName: string; assetSize: number; downloadedBytes: number; message: string; checkedAt: string; }
+export interface AppUpdate { currentVersion: string; latestVersion: string; available: boolean; state: "idle" | "checking" | "available" | "downloading" | "downloaded" | "installing" | "failed"; releaseNotes: string; publishedAt: string; releaseUrl: string; assetName: string; assetSize: number; downloadedBytes: number; message: string; networkStatus: string; checkedAt: string; }
 
 interface BackendApp {
   Dashboard(): Promise<Dashboard>; Health(): Promise<Health>; ListCompanies(): Promise<Company[]>; SaveCompany(input: CompanyInput): Promise<Company>;

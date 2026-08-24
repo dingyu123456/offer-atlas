@@ -37,7 +37,7 @@ const (
 // buildVersion is intentionally a variable so release builds can override it
 // with -ldflags. The checked-in value is also the version shown in development
 // builds and in the update dialog.
-var buildVersion = "0.2.5"
+var buildVersion = "0.2.6"
 
 // AppUpdate is a user-facing snapshot. It contains no credential or business
 // data and can safely be exposed to the Wails frontend.
@@ -53,6 +53,7 @@ type AppUpdate struct {
 	AssetSize       int64  `json:"assetSize"`
 	DownloadedBytes int64  `json:"downloadedBytes"`
 	Message         string `json:"message"`
+	NetworkStatus   string `json:"networkStatus"`
 	CheckedAt       string `json:"checkedAt"`
 }
 
@@ -109,6 +110,8 @@ type updateInstallPlan struct {
 	targetPath   string
 }
 
+type updateProxyResolver func(*url.URL) (*url.URL, bool)
+
 // updateManager owns the release metadata and the verified downloaded package.
 // It deliberately has no dependency on the data store: replacing the program
 // must never move, overwrite, or restore user data.
@@ -121,6 +124,7 @@ type updateManager struct {
 	downloadPath     string
 	apiURL           string
 	client           *http.Client
+	proxyResolver    updateProxyResolver
 	stagingDir       string
 	statePath        string
 	executablePath   string
@@ -141,12 +145,14 @@ func newUpdateManager(dataDirectory string) (*updateManager, error) {
 			CurrentVersion: normalizeVersion(buildVersion),
 			State:          "idle",
 			Message:        "可检查应用更新",
+			NetworkStatus:  "准备检测更新网络",
 		},
 		apiURL: defaultUpdateAPIURL,
 		// Time limits belong to the request contexts below. A single Client timeout
 		// incorrectly applies the short metadata deadline to the entire package
 		// download, including a slow but otherwise healthy response body.
-		client:         &http.Client{},
+		client:         newDirectUpdateHTTPClient(),
+		proxyResolver:  systemProxyForURL,
 		stagingDir:     stagingDir,
 		statePath:      filepath.Join(stagingDir, "state.json"),
 		executablePath: executablePath,
@@ -156,6 +162,13 @@ func newUpdateManager(dataDirectory string) (*updateManager, error) {
 	}
 	manager.loadPersistentState()
 	return manager, nil
+}
+
+func newDirectUpdateHTTPClient() *http.Client {
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	// Direct fallback must not be captured again by a process-level proxy.
+	transport.Proxy = nil
+	return &http.Client{Transport: transport}
 }
 
 func (m *updateManager) loadPersistentState() {
@@ -330,7 +343,7 @@ func (m *updateManager) fetchLatestReleaseAttempt(ctx context.Context) (githubRe
 	}
 	request.Header.Set("Accept", "application/vnd.github+json")
 	request.Header.Set("User-Agent", "OfferAtlas-Update-Check")
-	response, err := m.client.Do(request)
+	response, err := m.doUpdateRequest(request, "检查")
 	if err != nil {
 		return githubRelease{}, fmt.Errorf("request GitHub release: %w", err)
 	}
@@ -531,7 +544,7 @@ func (m *updateManager) openUpdateDownload(ctx context.Context, primaryURL, fall
 		request.Header.Set("User-Agent", "OfferAtlas-Updater")
 		request.Header.Set("Accept", "application/octet-stream")
 		request.Header.Set("X-GitHub-Api-Version", "2022-11-28")
-		response, err := m.client.Do(request)
+		response, err := m.doUpdateRequest(request, "下载")
 		if err == nil && response.StatusCode == http.StatusOK {
 			return response, nil
 		}
@@ -552,6 +565,66 @@ func (m *updateManager) openUpdateDownload(ctx context.Context, primaryURL, fall
 		lastErr = errors.New("下载更新包失败")
 	}
 	return nil, fmt.Errorf("download update: %w", lastErr)
+}
+
+func (m *updateManager) doUpdateRequest(request *http.Request, activity string) (*http.Response, error) {
+	proxyURL, useProxy := m.resolveUpdateProxy(request.URL)
+	if !useProxy {
+		m.setUpdateNetworkStatus("未检测到系统代理，正在直连" + activity)
+		return m.client.Do(request)
+	}
+	m.setUpdateNetworkStatus("正在通过系统代理" + activity + "（" + proxyEndpoint(proxyURL) + "）")
+	response, err := m.proxyHTTPClient(proxyURL).Do(request)
+	if !shouldFallbackToDirect(response, err) {
+		return response, err
+	}
+	if response != nil {
+		_ = response.Body.Close()
+	}
+	m.setUpdateNetworkStatus("系统代理不可用，已回退直连" + activity)
+	return m.client.Do(request)
+}
+
+func (m *updateManager) resolveUpdateProxy(target *url.URL) (*url.URL, bool) {
+	if m.proxyResolver == nil {
+		return nil, false
+	}
+	proxyURL, ok := m.proxyResolver(target)
+	return proxyURL, ok && proxyURL != nil
+}
+
+func (m *updateManager) proxyHTTPClient(proxyURL *url.URL) *http.Client {
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport.Proxy = http.ProxyURL(proxyURL)
+	return &http.Client{Transport: transport}
+}
+
+func shouldFallbackToDirect(response *http.Response, err error) bool {
+	if err != nil {
+		return errors.Is(err, context.DeadlineExceeded) || isTransportUpdateError(err)
+	}
+	if response == nil {
+		return false
+	}
+	return response.StatusCode == http.StatusProxyAuthRequired || response.StatusCode == http.StatusBadGateway || response.StatusCode == http.StatusServiceUnavailable || response.StatusCode == http.StatusGatewayTimeout
+}
+
+func isTransportUpdateError(err error) bool {
+	var requestError *url.Error
+	return errors.As(err, &requestError)
+}
+
+func proxyEndpoint(proxyURL *url.URL) string {
+	if proxyURL == nil || proxyURL.Host == "" {
+		return "本机代理"
+	}
+	return proxyURL.Host
+}
+
+func (m *updateManager) setUpdateNetworkStatus(status string) {
+	m.mu.Lock()
+	m.status.NetworkStatus = status
+	m.mu.Unlock()
 }
 
 func isFallbackableUpdateDownloadError(err error) bool {

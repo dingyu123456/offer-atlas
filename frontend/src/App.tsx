@@ -4460,6 +4460,7 @@ function UpdateDialog({
     assetSize: 0,
     downloadedBytes: 0,
     message: "正在读取更新状态",
+    networkStatus: "",
     checkedAt: "",
   };
   const busy = current.state === "checking" || current.state === "downloading" || current.state === "installing";
@@ -4516,6 +4517,7 @@ function UpdateDialog({
                 : current.state === "failed" ? "暂时无法检查更新" : "已是最新版本"}
             </strong>
             <span>{current.message}</span>
+            {current.networkStatus && <b className="update-network-status">{current.networkStatus}</b>}
             <em>{current.checkedAt ? `最近检查 ${textDateTime(current.checkedAt)}` : "尚未检查更新"}</em>
           </div>
           {current.publishedAt && <time>{textDate(current.publishedAt)} 发布</time>}
@@ -4525,6 +4527,7 @@ function UpdateDialog({
           <section className="update-download-progress" aria-live="polite">
             <div><span>正在下载并校验</span><strong>{progress}%</strong></div>
             <i><b style={{ width: `${progress}%` }} /></i>
+            {current.networkStatus && <small>{current.networkStatus}</small>}
             <small>{updateSize(current.downloadedBytes)} / {updateSize(current.assetSize) || "正在获取大小"}</small>
           </section>
         )}

@@ -110,6 +110,7 @@ i { font-style: normal; }
 .update-summary small { color: #7d938a; font-size: 9px; font-weight: 750; }
 .update-summary strong { color: #275047; font-size: 15px; }
 .update-summary > div > span { overflow: hidden; color: #688078; font-size: 10px; line-height: 1.45; text-overflow: ellipsis; white-space: nowrap; }
+.update-network-status { overflow: hidden; color: #377a72; font-size: 9px; font-weight: 750; line-height: 1.45; text-overflow: ellipsis; white-space: nowrap; }
 .update-summary > div > em { color: #98a69f; font-size: 9px; font-style: normal; line-height: 1.35; }
 .update-summary time { align-self: start; color: #8a9b95; font-size: 9px; white-space: nowrap; }
 .update-summary.failed { border-color: #e9c9ca; background: #fffafa; }
@@ -122,6 +123,7 @@ i { font-style: normal; }
 .update-download-progress > i { height: 5px; overflow: hidden; border-radius: 999px; background: #dfeaf0; }
 .update-download-progress > i > b { height: 100%; display: block; border-radius: inherit; background: #4d9cc0; transition: width .2s ease; }
 .update-download-progress small { color: #81949f; font-size: 9px; }
+.update-download-progress small + small { color: #81949f; }
 .update-release-notes { display: grid; gap: 9px; }
 .update-section-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; color: #45685e; font-size: 11px; font-weight: 800; }
 .update-release-notes pre { max-height: 190px; overflow: auto; margin: 0; padding: 13px 14px; border: 1px solid #e0e9e4; border-radius: 7px; color: #526b63; background: #fbfdfc; font-family: inherit; font-size: 11px; line-height: 1.7; white-space: pre-wrap; word-break: break-word; }
