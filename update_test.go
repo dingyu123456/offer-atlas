@@ -84,6 +84,17 @@ func TestUpdateVersionComparisonAndHelperScript(t *testing.T) {
 	}
 }
 
+func TestUpdateAssetDownloadURL(t *testing.T) {
+	asset := githubReleaseAsset{ID: 42, BrowserDownloadURL: "https://github.com/example/fallback.exe"}
+	if got, want := downloadURLForAsset(asset), defaultUpdateAssetAPIURL+"42"; got != want {
+		t.Fatalf("expected API asset URL %q, got %q", want, got)
+	}
+	asset.ID = 0
+	if got, want := downloadURLForAsset(asset), asset.BrowserDownloadURL; got != want {
+		t.Fatalf("expected browser fallback %q, got %q", want, got)
+	}
+}
+
 func testUpdateManager(t *testing.T, apiURL string) *updateManager {
 	t.Helper()
 	directory := t.TempDir()

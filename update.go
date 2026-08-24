@@ -20,14 +20,17 @@ import (
 )
 
 const (
-	defaultUpdateAPIURL = "https://api.github.com/repos/dingyu123456/offer-atlas/releases/latest"
-	updateCheckInterval = 24 * time.Hour
+	defaultUpdateAPIURL      = "https://api.github.com/repos/dingyu123456/offer-atlas/releases/latest"
+	defaultUpdateAssetAPIURL = "https://api.github.com/repos/dingyu123456/offer-atlas/releases/assets/"
+	updateCheckInterval      = 24 * time.Hour
+	updateCheckTimeout       = 20 * time.Second
+	updateDownloadTimeout    = 15 * time.Minute
 )
 
 // buildVersion is intentionally a variable so release builds can override it
 // with -ldflags. The checked-in value is also the version shown in development
 // builds and in the update dialog.
-var buildVersion = "0.2.1"
+var buildVersion = "0.2.2"
 
 // AppUpdate is a user-facing snapshot. It contains no credential or business
 // data and can safely be exposed to the Wails frontend.
@@ -55,6 +58,7 @@ type githubRelease struct {
 }
 
 type githubReleaseAsset struct {
+	ID                 int64  `json:"id"`
 	Name               string `json:"name"`
 	BrowserDownloadURL string `json:"browser_download_url"`
 	Size               int64  `json:"size"`
@@ -102,8 +106,11 @@ func newUpdateManager(dataDirectory string) (*updateManager, error) {
 			State:          "idle",
 			Message:        "可检查应用更新",
 		},
-		apiURL:         defaultUpdateAPIURL,
-		client:         &http.Client{Timeout: 20 * time.Second},
+		apiURL: defaultUpdateAPIURL,
+		// Time limits belong to the request contexts below. A single Client timeout
+		// incorrectly applies the short metadata deadline to the entire package
+		// download, including a slow but otherwise healthy response body.
+		client:         &http.Client{},
 		stagingDir:     stagingDir,
 		statePath:      filepath.Join(stagingDir, "state.json"),
 		executablePath: executablePath,
@@ -193,7 +200,9 @@ func (m *updateManager) check(ctx context.Context, manual bool) (AppUpdate, erro
 	m.status.DownloadedBytes = 0
 	m.mu.Unlock()
 
-	request, err := http.NewRequestWithContext(ctx, http.MethodGet, m.apiURL, nil)
+	checkCtx, cancelCheck := context.WithTimeout(ctx, updateCheckTimeout)
+	defer cancelCheck()
+	request, err := http.NewRequestWithContext(checkCtx, http.MethodGet, m.apiURL, nil)
 	if err == nil {
 		request.Header.Set("Accept", "application/vnd.github+json")
 		request.Header.Set("User-Agent", "OfferAtlas-Update-Check")
@@ -241,7 +250,7 @@ func (m *updateManager) check(ctx context.Context, manual bool) (AppUpdate, erro
 	m.assetDigest = ""
 	m.status.DownloadedBytes = 0
 	if m.status.Available {
-		m.assetURL = asset.BrowserDownloadURL
+		m.assetURL = downloadURLForAsset(asset)
 		m.assetDigest = asset.Digest
 		m.status.AssetName = asset.Name
 		m.status.AssetSize = asset.Size
@@ -290,6 +299,16 @@ func selectUpdateAsset(assets []githubReleaseAsset) (githubReleaseAsset, bool) {
 	return githubReleaseAsset{}, false
 }
 
+// Release asset API requests avoid an unnecessary direct connection to the
+// github.com download page and redirect straight to GitHub's file host. Older
+// releases or test servers without an asset ID keep using the public URL.
+func downloadURLForAsset(asset githubReleaseAsset) string {
+	if asset.ID > 0 {
+		return defaultUpdateAssetAPIURL + strconv.FormatInt(asset.ID, 10)
+	}
+	return asset.BrowserDownloadURL
+}
+
 func (m *updateManager) download(ctx context.Context) (AppUpdate, error) {
 	m.mu.Lock()
 	if m.status.State == "downloading" || m.status.State == "installing" {
@@ -312,13 +331,20 @@ func (m *updateManager) download(ctx context.Context) (AppUpdate, error) {
 	if err != nil {
 		return m.finishDownloadError(err)
 	}
-	request, err := http.NewRequestWithContext(ctx, http.MethodGet, assetURL, nil)
+	downloadCtx, cancelDownload := context.WithTimeout(ctx, updateDownloadTimeout)
+	defer cancelDownload()
+	request, err := http.NewRequestWithContext(downloadCtx, http.MethodGet, assetURL, nil)
 	if err != nil {
 		return m.finishDownloadError(err)
 	}
 	request.Header.Set("User-Agent", "OfferAtlas-Updater")
+	request.Header.Set("Accept", "application/octet-stream")
+	request.Header.Set("X-GitHub-Api-Version", "2022-11-28")
 	response, err := m.client.Do(request)
 	if err != nil {
+		if errors.Is(err, context.DeadlineExceeded) {
+			return m.finishDownloadError(fmt.Errorf("下载超过 %s，请检查网络后重试", updateDownloadTimeout))
+		}
 		return m.finishDownloadError(fmt.Errorf("download update: %w", err))
 	}
 	defer response.Body.Close()
@@ -357,6 +383,9 @@ func (m *updateManager) download(ctx context.Context) (AppUpdate, error) {
 		}
 		if readErr != nil {
 			_ = temporary.Close()
+			if errors.Is(readErr, context.DeadlineExceeded) {
+				return m.finishDownloadError(fmt.Errorf("下载超过 %s，请检查网络后重试", updateDownloadTimeout))
+			}
 			return m.finishDownloadError(fmt.Errorf("read update package: %w", readErr))
 		}
 	}
