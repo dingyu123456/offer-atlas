@@ -31,12 +31,13 @@ const (
 	updateCheckRetryCount = 5
 	updateCheckRetryDelay = time.Second
 	updateDownloadTimeout = 15 * time.Minute
+	updateDownloadBuffer  = 1 * 1024 * 1024
 )
 
 // buildVersion is intentionally a variable so release builds can override it
 // with -ldflags. The checked-in value is also the version shown in development
 // builds and in the update dialog.
-var buildVersion = "0.2.4"
+var buildVersion = "0.2.5"
 
 // AppUpdate is a user-facing snapshot. It contains no credential or business
 // data and can safely be exposed to the Wails frontend.
@@ -457,7 +458,9 @@ func (m *updateManager) download(ctx context.Context) (AppUpdate, error) {
 	temporaryPath := temporary.Name()
 	defer os.Remove(temporaryPath)
 	hash := sha256.New()
-	buffer := make([]byte, 128*1024)
+	// A larger buffer reduces read/write calls for the binary package without
+	// changing progress reporting, hashing, or the final integrity checks.
+	buffer := make([]byte, updateDownloadBuffer)
 	var downloaded int64
 	lastReported := time.Now()
 	for {
