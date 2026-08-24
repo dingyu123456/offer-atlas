@@ -30,7 +30,7 @@ func TestUpdateCheckAndVerifiedDownload(t *testing.T) {
 	}))
 	defer server.Close()
 	manager := testUpdateManager(t, server.URL+"/latest")
-	status, err := manager.check(context.Background(), true)
+	status, err := manager.check(context.Background(), true, true)
 	if err != nil {
 		t.Fatalf("check update: %v", err)
 	}
@@ -60,7 +60,7 @@ func TestUpdateRejectsMissingDigest(t *testing.T) {
 	}))
 	defer server.Close()
 	manager := testUpdateManager(t, server.URL+"/latest")
-	if _, err := manager.check(context.Background(), true); err != nil {
+	if _, err := manager.check(context.Background(), true, true); err != nil {
 		t.Fatalf("check update: %v", err)
 	}
 	status, err := manager.download(context.Background())
@@ -92,6 +92,47 @@ func TestUpdateAssetDownloadURL(t *testing.T) {
 	asset.ID = 0
 	if got, want := downloadURLForAsset(asset), asset.BrowserDownloadURL; got != want {
 		t.Fatalf("expected browser fallback %q, got %q", want, got)
+	}
+}
+
+func TestUpdateCheckRetriesTransientFailures(t *testing.T) {
+	payload := []byte("MZ Offer Atlas verified update")
+	digest := sha256.Sum256(payload)
+	attempts := 0
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		attempts++
+		if attempts <= updateCheckRetryCount {
+			writer.WriteHeader(http.StatusServiceUnavailable)
+			return
+		}
+		_, _ = fmt.Fprintf(writer, `{"tag_name":"v0.2.1","assets":[{"name":"OfferAtlas-windows-amd64.exe","browser_download_url":%q,"size":%d,"digest":"sha256:%s"}]}`,
+			"https://example.test/OfferAtlas-windows-amd64.exe", len(payload), hex.EncodeToString(digest[:]))
+	}))
+	defer server.Close()
+	manager := testUpdateManager(t, server.URL)
+	status, err := manager.check(context.Background(), true, true)
+	if err != nil {
+		t.Fatalf("check after retry: %v", err)
+	}
+	if attempts != updateCheckRetryCount+1 || !status.Available {
+		t.Fatalf("expected %d attempts and an available update, got %d and %#v", updateCheckRetryCount+1, attempts, status)
+	}
+}
+
+func TestUpdateCheckReportsFriendlyMessageAfterRetries(t *testing.T) {
+	attempts := 0
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		attempts++
+		writer.WriteHeader(http.StatusServiceUnavailable)
+	}))
+	defer server.Close()
+	manager := testUpdateManager(t, server.URL)
+	status, err := manager.check(context.Background(), true, true)
+	if err == nil || !strings.Contains(status.Message, "新版本检测超时") {
+		t.Fatalf("expected friendly timeout message, status=%#v err=%v", status, err)
+	}
+	if attempts != updateCheckRetryCount+1 {
+		t.Fatalf("expected %d attempts, got %d", updateCheckRetryCount+1, attempts)
 	}
 }
 

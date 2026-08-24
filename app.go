@@ -52,13 +52,13 @@ func (a *App) Startup(ctx context.Context) {
 	}
 	a.updater = updater
 	go func() {
-		// Let the primary workspace render first. An automatic update check never
-		// interrupts work; it simply makes the header entry available when needed.
-		timer := time.NewTimer(4 * time.Second)
+		// Every launch refreshes release information after the workspace renders.
+		// The result is informational only and never interrupts the user's work.
+		timer := time.NewTimer(time.Second)
 		defer timer.Stop()
 		select {
 		case <-timer.C:
-			_, _ = a.updater.check(context.Background(), false)
+			_, _ = a.updater.check(context.Background(), false, true)
 		case <-ctx.Done():
 			return
 		}
@@ -67,7 +67,7 @@ func (a *App) Startup(ctx context.Context) {
 		for {
 			select {
 			case <-periodic.C:
-				_, _ = a.updater.check(context.Background(), false)
+				_, _ = a.updater.check(context.Background(), false, false)
 			case <-ctx.Done():
 				return
 			}
@@ -169,7 +169,7 @@ func (a *App) CheckForAppUpdate() (AppUpdate, error) {
 	if a.updater == nil {
 		return AppUpdate{}, fmt.Errorf("更新服务正在启动")
 	}
-	return a.updater.check(a.ctx, true)
+	return a.updater.check(a.ctx, true, true)
 }
 
 func (a *App) DownloadAppUpdate() (AppUpdate, error) {

@@ -813,13 +813,19 @@ export default function App() {
             </div>
             <div className="topbar-actions">
 				<button
-					className={`app-update-entry ${appUpdate?.available ? "available" : ""} ${appUpdate?.state === "checking" || appUpdate?.state === "downloading" ? "busy" : ""}`}
+					className={`app-update-entry ${appUpdate?.available ? "available" : ""} ${appUpdate?.state === "failed" ? "failed" : ""} ${appUpdate?.state === "checking" || appUpdate?.state === "downloading" ? "busy" : ""}`}
 					type="button"
-					title={appUpdate?.available ? `发现 ${appUpdate.latestVersion}，查看更新` : "检查应用更新"}
-					onClick={() => setDialog("update")}
+					title={appUpdate?.state === "failed" ? (appUpdate.message || "新版本检测超时，请检查网络后重试") : appUpdate?.available ? `发现 ${appUpdate.latestVersion}，查看更新` : "检查应用更新"}
+					onClick={() => {
+						setDialog("update");
+						if (appUpdate?.state === "downloading" || appUpdate?.state === "installing" || appUpdate?.state === "downloaded") return;
+						void api.checkForAppUpdate().then(setAppUpdate).catch(() => {
+							void api.appUpdateStatus().then(setAppUpdate).catch(() => undefined);
+						});
+					}}
 				>
-					<RotateCcw size={14} />
-					<span>{appUpdate?.available ? `发现 v${appUpdate.latestVersion}` : "应用更新"}</span>
+					{appUpdate?.state === "failed" ? <CircleAlert size={14} /> : <RotateCcw size={14} />}
+					<span>{appUpdate?.state === "failed" ? "检查超时" : appUpdate?.available ? `发现 v${appUpdate.latestVersion}` : "应用更新"}</span>
 				</button>
               <div className="search-box" role="search">
                 <Search className="search-leading" size={15} />
@@ -4465,8 +4471,7 @@ function UpdateDialog({
     setError("");
     try {
       onChanged(await api.checkForAppUpdate());
-    } catch (reason) {
-      setError(messageOf(reason));
+    } catch {
       void api.appUpdateStatus().then(onChanged).catch(() => undefined);
     }
   };

@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -22,15 +23,20 @@ import (
 const (
 	defaultUpdateAPIURL      = "https://api.github.com/repos/dingyu123456/offer-atlas/releases/latest"
 	defaultUpdateAssetAPIURL = "https://api.github.com/repos/dingyu123456/offer-atlas/releases/assets/"
-	updateCheckInterval      = 24 * time.Hour
-	updateCheckTimeout       = 20 * time.Second
-	updateDownloadTimeout    = 15 * time.Minute
+	// A launch always checks immediately. This interval is only for long-running
+	// sessions, so it stays comfortably below the old once-per-day cadence
+	// without approaching GitHub's unauthenticated API rate limit.
+	updateCheckInterval   = 6 * time.Hour
+	updateCheckTimeout    = 5 * time.Second
+	updateCheckRetryCount = 5
+	updateCheckRetryDelay = time.Second
+	updateDownloadTimeout = 15 * time.Minute
 )
 
 // buildVersion is intentionally a variable so release builds can override it
 // with -ldflags. The checked-in value is also the version shown in development
 // builds and in the update dialog.
-var buildVersion = "0.2.2"
+var buildVersion = "0.2.3"
 
 // AppUpdate is a user-facing snapshot. It contains no credential or business
 // data and can safely be exposed to the Wails frontend.
@@ -63,6 +69,26 @@ type githubReleaseAsset struct {
 	BrowserDownloadURL string `json:"browser_download_url"`
 	Size               int64  `json:"size"`
 	Digest             string `json:"digest"`
+}
+
+type updateCheckHTTPError struct {
+	status int
+}
+
+func (e *updateCheckHTTPError) Error() string {
+	return fmt.Sprintf("GitHub 返回 HTTP %d", e.status)
+}
+
+type updateCheckRetriesExhaustedError struct {
+	last error
+}
+
+func (e *updateCheckRetriesExhaustedError) Error() string {
+	return fmt.Sprintf("更新检查连续失败：%v", e.last)
+}
+
+func (e *updateCheckRetriesExhaustedError) Unwrap() error {
+	return e.last
 }
 
 type updatePersistentState struct {
@@ -183,10 +209,10 @@ func (m *updateManager) shouldAutoCheck(now time.Time) bool {
 }
 
 // check returns whether a release newer than the running application exists.
-// Automatic checks preserve the last successful visible state when GitHub is
-// briefly unavailable; manual checks expose the useful error to the user.
-func (m *updateManager) check(ctx context.Context, manual bool) (AppUpdate, error) {
-	if !manual && !m.shouldAutoCheck(time.Now().UTC()) {
+// Startup and user-initiated checks are forced. Background checks retain a
+// small persistent cache so a long-running app does not poll GitHub needlessly.
+func (m *updateManager) check(ctx context.Context, manual bool, force bool) (AppUpdate, error) {
+	if !force && !manual && !m.shouldAutoCheck(time.Now().UTC()) {
 		return m.snapshot(), nil
 	}
 	m.mu.Lock()
@@ -196,31 +222,13 @@ func (m *updateManager) check(ctx context.Context, manual bool) (AppUpdate, erro
 		return status, nil
 	}
 	m.status.State = "checking"
-	m.status.Message = "正在检查新版本"
+	m.status.Message = updateCheckAttemptMessage(1)
 	m.status.DownloadedBytes = 0
 	m.mu.Unlock()
 
-	checkCtx, cancelCheck := context.WithTimeout(ctx, updateCheckTimeout)
-	defer cancelCheck()
-	request, err := http.NewRequestWithContext(checkCtx, http.MethodGet, m.apiURL, nil)
-	if err == nil {
-		request.Header.Set("Accept", "application/vnd.github+json")
-		request.Header.Set("User-Agent", "OfferAtlas-Update-Check")
-	}
+	release, err := m.fetchLatestRelease(ctx)
 	if err != nil {
 		return m.finishCheckError(manual, err)
-	}
-	response, err := m.client.Do(request)
-	if err != nil {
-		return m.finishCheckError(manual, fmt.Errorf("request GitHub release: %w", err))
-	}
-	defer response.Body.Close()
-	if response.StatusCode != http.StatusOK {
-		return m.finishCheckError(manual, fmt.Errorf("GitHub 返回 HTTP %d", response.StatusCode))
-	}
-	var release githubRelease
-	if err := json.NewDecoder(io.LimitReader(response.Body, 4*1024*1024)).Decode(&release); err != nil {
-		return m.finishCheckError(manual, fmt.Errorf("read GitHub release: %w", err))
 	}
 	latestVersion := normalizeVersion(release.TagName)
 	if latestVersion == "" {
@@ -268,19 +276,106 @@ func (m *updateManager) check(ctx context.Context, manual bool) (AppUpdate, erro
 	return status, nil
 }
 
+func updateCheckAttemptMessage(attempt int) string {
+	return fmt.Sprintf("正在检查新版本（第 %d/%d 次）", attempt, updateCheckRetryCount+1)
+}
+
+func (m *updateManager) setUpdateCheckAttempt(attempt int) {
+	m.mu.Lock()
+	if m.status.State == "checking" {
+		m.status.Message = updateCheckAttemptMessage(attempt)
+	}
+	m.mu.Unlock()
+}
+
+func (m *updateManager) fetchLatestRelease(ctx context.Context) (githubRelease, error) {
+	var lastErr error
+	for attempt := 1; attempt <= updateCheckRetryCount+1; attempt++ {
+		m.setUpdateCheckAttempt(attempt)
+		release, err := m.fetchLatestReleaseAttempt(ctx)
+		if err == nil {
+			return release, nil
+		}
+		if ctx.Err() != nil || !isRetryableUpdateCheckError(err) {
+			return githubRelease{}, err
+		}
+		lastErr = err
+		if attempt == updateCheckRetryCount+1 {
+			break
+		}
+		if err := waitForUpdateCheckRetry(ctx, updateCheckRetryDelay); err != nil {
+			return githubRelease{}, err
+		}
+	}
+	return githubRelease{}, &updateCheckRetriesExhaustedError{last: lastErr}
+}
+
+func (m *updateManager) fetchLatestReleaseAttempt(ctx context.Context) (githubRelease, error) {
+	checkCtx, cancelCheck := context.WithTimeout(ctx, updateCheckTimeout)
+	defer cancelCheck()
+	request, err := http.NewRequestWithContext(checkCtx, http.MethodGet, m.apiURL, nil)
+	if err != nil {
+		return githubRelease{}, err
+	}
+	request.Header.Set("Accept", "application/vnd.github+json")
+	request.Header.Set("User-Agent", "OfferAtlas-Update-Check")
+	response, err := m.client.Do(request)
+	if err != nil {
+		return githubRelease{}, fmt.Errorf("request GitHub release: %w", err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		return githubRelease{}, &updateCheckHTTPError{status: response.StatusCode}
+	}
+	var release githubRelease
+	if err := json.NewDecoder(io.LimitReader(response.Body, 4*1024*1024)).Decode(&release); err != nil {
+		return githubRelease{}, fmt.Errorf("read GitHub release: %w", err)
+	}
+	return release, nil
+}
+
+func isRetryableUpdateCheckError(err error) bool {
+	if errors.Is(err, context.Canceled) {
+		return false
+	}
+	if errors.Is(err, context.DeadlineExceeded) {
+		return true
+	}
+	var requestError *url.Error
+	if errors.As(err, &requestError) {
+		return true
+	}
+	var responseError *updateCheckHTTPError
+	if errors.As(err, &responseError) {
+		return responseError.status == http.StatusRequestTimeout || responseError.status == http.StatusTooManyRequests || responseError.status >= http.StatusInternalServerError
+	}
+	return false
+}
+
+func waitForUpdateCheckRetry(ctx context.Context, delay time.Duration) error {
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+	select {
+	case <-timer.C:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
 func (m *updateManager) finishCheckError(manual bool, reason error) (AppUpdate, error) {
 	m.mu.Lock()
-	if manual || !m.status.Available {
-		m.status.State = "failed"
-		m.status.Message = "检查更新失败：" + reason.Error()
+	m.status.State = "failed"
+	var exhausted *updateCheckRetriesExhaustedError
+	if errors.As(reason, &exhausted) {
+		m.status.Message = "新版本检测超时，请检查网络后重试"
 	} else {
-		m.status.State = "available"
-		m.status.Message = "暂时无法检查更新；已发现的新版本仍可下载"
+		m.status.Message = "检查更新失败：" + reason.Error()
 	}
 	status := m.status
 	m.mu.Unlock()
 	if manual {
-		return status, reason
+		return status, errors.New(status.Message)
 	}
 	return status, nil
 }

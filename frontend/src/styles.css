@@ -97,6 +97,8 @@ i { font-style: normal; }
 .app-update-entry:hover { border-color: #cddcd6; color: #176d62; background: #f3f8f5; }
 .app-update-entry.available { border-color: #a9d5c4; color: #08675a; background: #eaf8f1; box-shadow: inset 0 2px 0 #c9ecdc; }
 .app-update-entry.available svg { color: #0b8975; }
+.app-update-entry.failed { border-color: #ebc9ca; color: #aa4e56; background: #fff7f7; box-shadow: inset 0 2px 0 #f4dddd; }
+.app-update-entry.failed svg { color: #c45860; }
 .app-update-entry.busy svg, .button-spinner { animation: cloud-sync-spin 1.05s linear infinite; }
 
 .update-dialog-body { display: grid; gap: 16px; padding: 18px 24px 22px; }
