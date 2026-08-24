@@ -41,7 +41,10 @@ func (a *App) Startup(ctx context.Context) {
 		panic(fmt.Errorf("resolve application data path: %w", err))
 	}
 
-	database, err := store.Open(dataPath)
+	database, err := store.OpenWithSyncClient(dataPath, store.SyncClientInfo{
+		Version:      buildVersion,
+		Capabilities: []string{"sync-compatibility-v1"},
+	})
 	if err != nil {
 		panic(fmt.Errorf("open application database: %w", err))
 	}

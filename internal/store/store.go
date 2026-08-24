@@ -30,9 +30,28 @@ type Store struct {
 	safetyMu      sync.RWMutex
 	safety        domain.SafetyStatus
 	cloud         *cloudSync
+	syncClient    SyncClientInfo
 }
 
+// SyncClientInfo identifies the features a desktop build understands. It stays
+// local: the connected cloud workspace remains the authority for the minimum
+// version and capabilities required before synchronization is allowed.
+type SyncClientInfo struct {
+	Version      string
+	Capabilities []string
+}
+
+const defaultSyncClientVersion = "0.3.2"
+
+var defaultSyncCapabilities = []string{"sync-compatibility-v1"}
+
 func Open(path string) (*Store, error) {
+	return OpenWithSyncClient(path, SyncClientInfo{Version: defaultSyncClientVersion, Capabilities: defaultSyncCapabilities})
+}
+
+// OpenWithSyncClient lets the desktop shell pass the actual release version
+// while keeping tests and other local callers on the compatibility baseline.
+func OpenWithSyncClient(path string, client SyncClientInfo) (*Store, error) {
 	if strings.TrimSpace(path) == "" {
 		return nil, errors.New("database path is required")
 	}
@@ -57,10 +76,11 @@ func Open(path string) (*Store, error) {
 
 	safetyDir := filepath.Join(filepath.Dir(path), "safety-mirror")
 	store := &Store{
-		db:        db,
-		path:      path,
-		safetyDir: safetyDir,
-		safety:    domain.SafetyStatus{MirrorDirectory: safetyDir},
+		db:         db,
+		path:       path,
+		safetyDir:  safetyDir,
+		safety:     domain.SafetyStatus{MirrorDirectory: safetyDir},
+		syncClient: normalizeSyncClientInfo(client),
 	}
 	if err := store.migrateLegacyApplicationResumes(); err != nil {
 		_ = db.Close()
@@ -74,6 +94,26 @@ func Open(path string) (*Store, error) {
 	store.cloud = newCloudSync(store)
 	store.cloud.start()
 	return store, nil
+}
+
+func normalizeSyncClientInfo(client SyncClientInfo) SyncClientInfo {
+	if normalizeSyncVersion(client.Version) == "" {
+		client.Version = defaultSyncClientVersion
+	} else {
+		client.Version = normalizeSyncVersion(client.Version)
+	}
+	seen := map[string]bool{}
+	capabilities := make([]string, 0, len(client.Capabilities)+1)
+	for _, capability := range append(client.Capabilities, "sync-compatibility-v1") {
+		capability = strings.TrimSpace(capability)
+		if capability != "" && !seen[capability] {
+			seen[capability] = true
+			capabilities = append(capabilities, capability)
+		}
+	}
+	sort.Strings(capabilities)
+	client.Capabilities = capabilities
+	return client
 }
 
 func (s *Store) Close() error {

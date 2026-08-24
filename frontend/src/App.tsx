@@ -327,6 +327,7 @@ export default function App() {
 	const [appUpdate, setAppUpdate] = useState<AppUpdate | null>(null);
   const [cloudSyncRevision, setCloudSyncRevision] = useState(0);
   const cloudSyncSnapshot = useRef<Pick<CloudSyncStatus, "activity" | "state" | "lastSuccessAt"> | null>(null);
+	const cloudSyncUpdatePrompted = useRef("");
   const [companies, setCompanies] = useState<Company[]>([]);
   const [campaigns, setCampaigns] = useState<Campaign[]>([]);
 	const [directoryStats, setDirectoryStats] = useState<DirectoryStats>({ companyCount: 0, campaignCount: 0, positionCount: 0, applicationCount: 0 });
@@ -566,6 +567,17 @@ export default function App() {
           lastSuccessAt: next.lastSuccessAt,
         };
         setCloudSync(next);
+			if (next.state === "update_required") {
+				const requirement = `${next.minimumClientVersion}|${(next.requiredCapabilities || []).join(",")}|${next.message}`;
+				if (cloudSyncUpdatePrompted.current !== requirement) {
+					cloudSyncUpdatePrompted.current = requirement;
+					setBackupCenterOpen(false);
+					setDialog("update");
+					void api.checkForAppUpdate().then(setAppUpdate).catch(() => {
+						void api.appUpdateStatus().then(setAppUpdate).catch(() => undefined);
+					});
+				}
+			}
         if (successfulCheckCompleted) setCloudSyncRevision((value) => value + 1);
       }).catch(() => undefined);
     };
@@ -1397,6 +1409,13 @@ export default function App() {
           <BackupCenterDialog
             onClose={() => setBackupCenterOpen(false)}
             onCloudDataChanged={() => setCloudSyncRevision((value) => value + 1)}
+			onRequestAppUpdate={() => {
+				setBackupCenterOpen(false);
+				setDialog("update");
+				void api.checkForAppUpdate().then(setAppUpdate).catch(() => {
+					void api.appUpdateStatus().then(setAppUpdate).catch(() => undefined);
+				});
+			}}
             onRequestProtectedAction={setProtectedAction}
             onRestored={async (result) => {
               await load();
@@ -7137,6 +7156,7 @@ function StageTypesDialog({
 }
 
 function syncStateLabel(status?: CloudSyncStatus | null) {
+  if (status?.activity === "compatibility") return "确认兼容性";
   if (status?.activity === "checking") return "检查云端";
   if (status?.activity === "downloading") return "正在恢复";
   if (status?.activity === "uploading") return "正在上传";
@@ -7148,11 +7168,14 @@ function syncStateLabel(status?: CloudSyncStatus | null) {
     case "failed": return "同步失败";
     case "conflict": return "需要处理冲突";
     case "pending_confirmation": return "等待确认";
+    case "update_required": return "需要更新";
+    case "compatibility_unavailable": return "云端未确认";
     default: return "仅本机";
   }
 }
 
 function cloudSyncCompactLabel(status: CloudSyncStatus | null) {
+  if (status?.activity === "compatibility") return "正在确认云端兼容性";
   if (status?.activity === "checking") return "正在检查云端";
   if (status?.activity === "downloading") return "正在恢复云端数据";
   if (status?.activity === "uploading") return "正在上传本机数据";
@@ -7170,6 +7193,10 @@ function cloudSyncCompactLabel(status: CloudSyncStatus | null) {
       return `需处理冲突 ${Math.max(1, status.conflictCount)} 项`;
     case "pending_confirmation":
       return "等待同步确认";
+    case "update_required":
+      return "需要更新后同步";
+    case "compatibility_unavailable":
+      return "云端兼容性未确认";
     default:
       return "云同步未开启";
   }
@@ -7188,12 +7215,17 @@ function cloudSyncProgressDetail(status: CloudSyncStatus | null) {
     if (status.queuedChanges > 0) return `下一批待上传 ${status.queuedChanges} 条`;
     return status.activeChanges > 0 ? `本次剩余 ${status.activeChanges} 条` : "正在完成本次同步";
   }
+  if (status.activity === "compatibility") {
+    return status.queuedChanges > 0 ? `确认后上传 ${status.queuedChanges} 条` : "正在确认云端数据可安全读取";
+  }
   if (status.activity === "checking") {
     return status.queuedChanges > 0 ? `检查完成后上传 ${status.queuedChanges} 条` : "正在核对其他设备的更新";
   }
   if (cloudSyncRecentlyCompleted(status)) return "刚刚完成云端检查，本机数据已保持最新";
   if (status.state === "pending") return `本轮约 10 秒后上传 ${Math.max(1, status.pendingChanges)} 条`;
   if (status.state === "failed") return "本地已保存，等待处理";
+  if (status.state === "update_required") return "为保护数据，尚未传输任何记录";
+  if (status.state === "compatibility_unavailable") return "请检查网络后重新确认";
   if (status.state === "conflict") return `需处理 ${Math.max(1, status.conflictCount)} 项冲突`;
   if (status.state === "synced") return "已核对云端，本机镜像可恢复";
   return "可在此连接 Gitee 云同步";
@@ -7230,11 +7262,13 @@ function SyncSummaryColumns({ local, cloud }: { local: import("./api").SyncDataS
 function BackupCenterDialog({
   onClose,
   onCloudDataChanged,
+	onRequestAppUpdate,
   onRequestProtectedAction,
   onRestored,
 }: {
   onClose: () => void;
   onCloudDataChanged: () => void;
+	onRequestAppUpdate: () => void;
   onRequestProtectedAction: (action: ProtectedAction) => void;
   onRestored: (result: {
     restoredBackup: BackupRecord;
@@ -7467,7 +7501,7 @@ function BackupCenterDialog({
     }
 	};
 	const cloudStatus = center?.cloudSync;
-	const cloudBusy = !center || initialSyncConfirming || cloudStatus?.activity === "checking" || cloudStatus?.activity === "syncing" || cloudStatus?.activity === "downloading" || cloudStatus?.activity === "uploading" || cloudStatus?.activity === "deleting" || saving === "connect-gitee" || saving === "sync-now" || saving === "disconnect-gitee" || saving === "delete-cloud";
+	const cloudBusy = !center || initialSyncConfirming || cloudStatus?.activity === "checking" || cloudStatus?.activity === "compatibility" || cloudStatus?.activity === "syncing" || cloudStatus?.activity === "downloading" || cloudStatus?.activity === "uploading" || cloudStatus?.activity === "deleting" || saving === "connect-gitee" || saving === "sync-now" || saving === "disconnect-gitee" || saving === "delete-cloud";
 	return (
     <Dialog
       title="数据安全与同步"
@@ -7594,6 +7628,7 @@ function BackupCenterDialog({
 				{cloudStatus?.lastSuccessAt && <span>最近成功 {textDateTime(cloudStatus.lastSuccessAt)}</span>}
 				{cloudStatus?.activity === "uploading" && <span className="gitee-active-count gitee-live-activity"><LoaderCircle size={12} />{syncTransferProgress(cloudStatus, "正在上传")}</span>}
 				{cloudStatus?.activity === "downloading" && <span className="gitee-active-count gitee-live-activity"><LoaderCircle size={12} />{syncTransferProgress(cloudStatus, "正在恢复云端数据")}</span>}
+				{cloudStatus?.activity === "compatibility" && <span className="gitee-active-count gitee-live-activity"><LoaderCircle size={12} />正在确认云端兼容性</span>}
 				{cloudStatus?.activity === "syncing" && <span className="gitee-active-count gitee-live-activity"><LoaderCircle size={12} />本次同步 {cloudStatus.activeChanges} 条</span>}
 				{cloudStatus?.activity === "checking" && <span className="gitee-active-count gitee-live-activity"><LoaderCircle size={12} />正在检查云端更新</span>}
 				{cloudStatus?.activity === "deleting" && <span className="gitee-active-count gitee-live-activity"><LoaderCircle size={12} />正在删除云端仓库（{cloudStatus.progressDone}/{cloudStatus.progressTotal}）</span>}
@@ -7605,7 +7640,7 @@ function BackupCenterDialog({
 				<div className="gitee-primary-actions">
 				<button className="secondary-button" disabled={saving === "sync-now" || !cloudStatus?.canSync} onClick={() => void syncNow()}>
 				  {saving === "sync-now" ? <LoaderCircle className="button-wait-icon" size={15} /> : <RotateCcw size={15} />}
-                  {saving === "sync-now" ? "同步中" : "立即同步"}
+				  {saving === "sync-now" ? "同步中" : cloudStatus?.state === "compatibility_unavailable" ? "重新确认兼容性" : cloudStatus?.state === "update_required" ? "需要更新" : "立即同步"}
                 </button>
 				</div>
 				<div className="gitee-danger-actions" aria-label="危险操作">
@@ -7626,6 +7661,8 @@ function BackupCenterDialog({
             <p className="gitee-sync-rules">启动应用、每次成功同步后 30 秒及手动同步时都会先检查云端；首次修改后约 10 秒同步，窗口内后续修改会并入本轮。同步期间的新修改进入下一批，且始终先拉取、再推送。</p>
           )}
 		  {cloudStatus?.state === "failed" && <div className="gitee-failure-notice"><strong>本次云同步未完成</strong><span>{cloudStatus.message}</span><small>本地数据和已恢复的数据均已保存。检查网络或 Gitee 状态后可再次同步，系统会从已完成的位置继续。</small></div>}
+		  {cloudStatus?.state === "compatibility_unavailable" && <div className="gitee-failure-notice"><strong>云端兼容性尚未确认</strong><span>{cloudStatus.message}</span><small>为保护数据，本次没有下载、合并或上传任何记录。检查网络后可重新确认。</small></div>}
+		  {cloudStatus?.state === "update_required" && <div className="gitee-failure-notice"><strong>需要更新应用后继续同步</strong><span>{cloudStatus.message}</span><small>为保护数据，本次没有下载、合并或上传任何记录。</small><button className="secondary-button" onClick={onRequestAppUpdate}>检查应用更新</button></div>}
           {conflicts.length > 0 && (
             <div className="gitee-conflicts">
               <strong>需要处理的同步冲突</strong>

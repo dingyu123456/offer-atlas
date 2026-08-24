@@ -6,7 +6,7 @@ import (
 	"github.com/dingyu/offer-atlas/internal/domain"
 )
 
-const schemaVersion = 19
+const schemaVersion = 20
 
 func migrate(db *sql.DB) error {
 	if _, err := db.Exec(`
@@ -134,6 +134,12 @@ func migrate(db *sql.DB) error {
 			return err
 		}
 		current = 19
+	}
+	if current < 20 {
+		if err := applyMigration(db, 20, giteeSyncCompatibilitySchema); err != nil {
+			return err
+		}
+		current = 20
 	}
 	if err := ensurePositionSourceURL(db); err != nil {
 		return err
@@ -539,6 +545,20 @@ const giteeSyncCursorSchema = `
 		last_sequence INTEGER NOT NULL DEFAULT 0,
 		updated_at TEXT NOT NULL
 	);
+`
+
+// The cache remembers only the last successfully read remote compatibility
+// declaration. It is intentionally allowed to block cloud sync while offline,
+// but never grants permission without a fresh remote read.
+const giteeSyncCompatibilitySchema = `
+	CREATE TABLE sync_compatibility_cache (
+		id INTEGER PRIMARY KEY CHECK(id = 1),
+		minimum_client_version TEXT NOT NULL DEFAULT '',
+		required_capabilities TEXT NOT NULL DEFAULT '[]',
+		compatibility_epoch INTEGER NOT NULL DEFAULT 0,
+		checked_at TEXT NOT NULL DEFAULT ''
+	);
+	INSERT INTO sync_compatibility_cache(id) VALUES (1);
 `
 
 // Resume versions are first-class reusable documents. The former

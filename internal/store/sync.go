@@ -29,9 +29,10 @@ const (
 	// No .json suffix: previous application versions treat every JSON file in an
 	// operation directory as a sync record. Keeping the discovery index outside
 	// that set lets older devices continue to read new canonical records safely.
-	operationIndexName       = "offer-atlas-operation-index"
-	syncFormatVersion        = 1
-	mediaSoftLimit     int64 = 400 * 1024 * 1024
+	operationIndexName              = "offer-atlas-operation-index"
+	syncFormatVersion               = 1
+	mediaSoftLimit            int64 = 400 * 1024 * 1024
+	compatibilityCheckTimeout       = 6 * time.Second
 )
 
 var syncObjectSpecs = []syncObjectSpec{
@@ -49,11 +50,69 @@ var syncObjectSpecs = []syncObjectSpec{
 	{Type: "application_resume", Table: "application_resumes", Columns: []string{"id", "application_id", "original_name", "stored_name", "mime_type", "size_bytes", "created_at"}, FileKind: "legacy_resume"},
 }
 
+// The first attempt starts immediately. Short retries make transient network
+// failures recover quickly without leaving the interface in a vague waiting
+// state for several minutes.
+var syncRetryDelays = []time.Duration{0, 2 * time.Second, 5 * time.Second, 12 * time.Second}
+
 type syncObjectSpec struct {
-	Type     string
-	Table    string
-	Columns  []string
-	FileKind string
+	Type                 string
+	Table                string
+	Columns              []string
+	FileKind             string
+	MinimumClientVersion string
+	RequiredCapabilities []string
+}
+
+// syncRepositoryMarker lives in the primary repository and is deliberately
+// separate from the data-format number. The latter identifies the on-disk
+// record format; these fields decide whether a desktop build may safely read
+// or write the current workspace at all.
+type syncRepositoryMarker struct {
+	Product              string   `json:"product"`
+	Format               int      `json:"format"`
+	Kind                 string   `json:"kind"`
+	CreatedAt            string   `json:"created_at"`
+	MinimumClientVersion string   `json:"minimum_client_version,omitempty"`
+	RequiredCapabilities []string `json:"required_capabilities,omitempty"`
+	CompatibilityEpoch   int      `json:"compatibility_epoch,omitempty"`
+	UpdatedAt            string   `json:"updated_at,omitempty"`
+}
+
+type compatibilityCheckError struct{ err error }
+
+func (e *compatibilityCheckError) Error() string {
+	if e == nil || e.err == nil {
+		return "无法确认云端兼容性"
+	}
+	return "确认云端兼容性: " + e.err.Error()
+}
+
+func (e *compatibilityCheckError) Unwrap() error { return e.err }
+
+// compatibilityUnavailableError is intentionally non-retriable within the
+// current batch: a malformed marker cannot become safe through another read.
+type compatibilityUnavailableError struct{ message string }
+
+func (e *compatibilityUnavailableError) Error() string { return e.message }
+
+type compatibilityUpdateRequiredError struct {
+	minimumVersion      string
+	missingCapabilities []string
+}
+
+func (e *compatibilityUpdateRequiredError) Error() string {
+	parts := make([]string, 0, 2)
+	if e.minimumVersion != "" {
+		parts = append(parts, "云端数据需要 Offer Atlas v"+e.minimumVersion+" 或更高版本")
+	}
+	if len(e.missingCapabilities) > 0 {
+		parts = append(parts, "当前版本缺少所需同步能力："+strings.Join(e.missingCapabilities, "、"))
+	}
+	if len(parts) == 0 {
+		return "云端数据需要更新后的 Offer Atlas 才能继续同步"
+	}
+	return strings.Join(parts, "；") + "。为保护数据，本次未传输任何记录。"
 }
 
 func syncSpec(objectType string) (syncObjectSpec, bool) {
@@ -272,6 +331,11 @@ func (s *Store) NeedsSyncBeforeClose() bool {
 	if err != nil || !config.Enabled || config.InitialSyncPending {
 		return false
 	}
+	// A newer client must take ownership of pending data that this build cannot
+	// interpret. Keeping the current app open would not make that data safer.
+	if config.State == "update_required" {
+		return false
+	}
 	var pending int
 	if err := s.db.QueryRow(`SELECT COUNT(*) FROM sync_operations WHERE synced_at=''`).Scan(&pending); err != nil {
 		return false
@@ -481,7 +545,7 @@ func (c *cloudSync) cancelLocalTimer() {
 
 func (c *cloudSync) scheduleAfterRun(success bool) {
 	if !success {
-		// runLocked already performs the configured 10/30/90-second retries.
+		// runLocked already performs the configured short retries.
 		// The recurring 30-second clock starts only after a successful remote
 		// check, so an actionable failure remains visible instead of looping.
 		return
@@ -553,6 +617,9 @@ func (c *cloudSync) syncBeforeClose(ctx context.Context) error {
 		}
 		return errors.New("上一次云同步未完成，请检查网络或 Gitee 连接")
 	}
+	if config.State == "update_required" {
+		return nil
+	}
 	if err := c.captureLocalChanges(); err != nil {
 		c.setSyncFailure(err)
 		return err
@@ -584,20 +651,13 @@ func (c *cloudSync) runLocked(ctx context.Context, manual bool) error {
 	if err != nil {
 		return err
 	}
-	activity := "checking"
-	message := "正在检查云端是否有更新"
-	if cutoffSequence > 0 {
-		activity = "uploading"
-		message = "正在准备同步本机更改"
-	}
-	c.setActivity(activity, cutoffSequence)
+	c.setActivity("compatibility", cutoffSequence)
 	defer c.clearActivity()
-	c.setState("syncing", message)
+	c.setState("syncing", "正在确认云端兼容性")
 	var lastErr error
-	retryDelays := []time.Duration{0, 10 * time.Second, 30 * time.Second, 90 * time.Second}
-	for attempt, delay := range retryDelays {
+	for attempt, delay := range syncRetryDelays {
 		if attempt > 0 {
-			c.setActivityRetry(attempt, len(retryDelays), lastErr, delay)
+			c.setActivityRetry(attempt, len(syncRetryDelays), lastErr, delay)
 			if err := waitSyncDelay(ctx, delay); err != nil {
 				return err
 			}
@@ -617,6 +677,18 @@ func (c *cloudSync) runLocked(ctx context.Context, manual bool) error {
 			c.scheduleAfterRun(true)
 			return nil
 		}
+		var updateRequired *compatibilityUpdateRequiredError
+		if errors.As(lastErr, &updateRequired) {
+			c.setState("update_required", updateRequired.Error())
+			c.clearActivity()
+			return lastErr
+		}
+		var unavailable *compatibilityUnavailableError
+		if errors.As(lastErr, &unavailable) {
+			c.setState("compatibility_unavailable", unavailable.Error())
+			c.clearActivity()
+			return lastErr
+		}
 		var gerr *giteeError
 		if errors.As(lastErr, &gerr) && gerr.actionable() {
 			break
@@ -628,6 +700,13 @@ func (c *cloudSync) runLocked(ctx context.Context, manual bool) error {
 	}
 	if errors.Is(ctx.Err(), context.Canceled) {
 		return ctx.Err()
+	}
+	var compatibilityErr *compatibilityCheckError
+	if errors.As(lastErr, &compatibilityErr) {
+		c.setState("compatibility_unavailable", "暂时无法确认云端兼容性。请检查网络后重新尝试；本次未传输任何记录。")
+		c.clearActivity()
+		c.schedulePeriodicCheck(10 * time.Minute)
+		return lastErr
 	}
 	c.setSyncFailure(lastErr)
 	c.clearActivity()
@@ -671,7 +750,14 @@ func (c *cloudSync) syncOnce(ctx context.Context, config syncConfigRow, cutoffSe
 		return err
 	}
 	client := c.client(token)
+	c.setActivity("compatibility", cutoffSequence)
+	if _, _, err := c.checkRemoteCompatibility(ctx, client, config); err != nil {
+		return err
+	}
 	if err := c.pullRemote(ctx, client, config); err != nil {
+		return err
+	}
+	if err := c.raiseRemoteCompatibilityForPending(ctx, client, config, cutoffSequence); err != nil {
 		return err
 	}
 	if err := c.uploadPending(ctx, client, config, cutoffSequence); err != nil {
@@ -773,7 +859,7 @@ func (c *cloudSync) setState(state, message string) {
 }
 
 func messageIfFailure(state, message string) string {
-	if state == "failed" || state == "conflict" {
+	if state == "failed" || state == "conflict" || state == "update_required" || state == "compatibility_unavailable" {
 		return message
 	}
 	return ""
@@ -795,6 +881,10 @@ func (c *cloudSync) status() (domain.CloudSyncStatus, error) {
 	if err := c.store.db.QueryRow(`SELECT COUNT(*) FROM sync_conflicts WHERE status='open'`).Scan(&status.ConflictCount); err != nil {
 		return domain.CloudSyncStatus{}, err
 	}
+	if marker, _, cacheErr := c.cachedRemoteCompatibility(); cacheErr == nil {
+		status.MinimumClientVersion = marker.MinimumClientVersion
+		status.RequiredCapabilities = marker.RequiredCapabilities
+	}
 	activity := c.activitySnapshot()
 	status.Activity = activity.kind
 	status.ProgressDone = activity.progressDone
@@ -805,7 +895,7 @@ func (c *cloudSync) status() (domain.CloudSyncStatus, error) {
 	status.RetryMax = activity.retryMax
 	status.RetryError = activity.retryError
 	status.RetryAfter = activity.retryAfter
-	if activity.kind == "syncing" || activity.kind == "uploading" {
+	if activity.kind == "syncing" || activity.kind == "uploading" || activity.kind == "compatibility" {
 		if err := c.store.db.QueryRow(`SELECT COUNT(*) FROM sync_operations WHERE synced_at='' AND sequence<=?`, activity.cutoffSequence).Scan(&status.ActiveChanges); err != nil {
 			return domain.CloudSyncStatus{}, err
 		}
@@ -822,13 +912,19 @@ func (c *cloudSync) status() (domain.CloudSyncStatus, error) {
 			status.Activity = "checking"
 		}
 	}
-	status.CanSync = !config.InitialSyncPending
+	status.CanSync = !config.InitialSyncPending && config.State != "update_required"
 	switch config.State {
 	case "synced":
 		status.Message = "已与 Gitee 云端同步"
 	case "syncing":
 		if status.RetryAttempt > 0 && status.RetryAfter > 0 {
 			status.Message = fmt.Sprintf("同步请求暂时失败，将在 %d 秒后重试（%d/%d）", status.RetryAfter, status.RetryAttempt, status.RetryMax-1)
+		} else if status.Activity == "compatibility" {
+			if status.QueuedChanges > 0 {
+				status.Message = fmt.Sprintf("正在确认云端兼容性；本机有 %d 条修改等待同步", status.QueuedChanges)
+			} else {
+				status.Message = "正在确认云端兼容性"
+			}
 		} else if status.Activity == "downloading" {
 			if status.ProgressTotal > 0 {
 				status.Message = fmt.Sprintf("正在恢复云端数据（%d/%d）", status.ProgressDone, status.ProgressTotal)
@@ -859,6 +955,16 @@ func (c *cloudSync) status() (domain.CloudSyncStatus, error) {
 		if config.LastError != "" {
 			detail := strings.TrimPrefix(config.LastError, "本地数据已保存，云同步未完成：")
 			status.Message += "：" + detail
+		}
+	case "update_required":
+		status.Message = config.LastError
+		if status.Message == "" {
+			status.Message = "云端数据需要更新后的 Offer Atlas 才能继续同步"
+		}
+	case "compatibility_unavailable":
+		status.Message = config.LastError
+		if status.Message == "" {
+			status.Message = "暂时无法确认云端兼容性；本次未传输任何记录"
 		}
 	default:
 		status.Message = "Gitee 云同步等待确认"
@@ -941,11 +1047,19 @@ func (c *cloudSync) connect(ctx context.Context, token string) (domain.GiteeConn
 	if err != nil {
 		return domain.GiteeConnectionPreview{}, err
 	}
-	if err := c.saveToken(token); err != nil {
-		return domain.GiteeConnectionPreview{}, err
-	}
 	config, err := c.config()
 	if err != nil {
+		return domain.GiteeConnectionPreview{}, err
+	}
+	// Do not read operation history or persist a connection that this desktop
+	// build cannot safely use. A newly created primary marker has no minimum
+	// requirement, while an existing workspace may intentionally require a
+	// newer release.
+	config.Owner, config.PrimaryRepo = user.Login, repo.Name
+	if _, _, err := c.checkRemoteCompatibility(ctx, client, config); err != nil {
+		return domain.GiteeConnectionPreview{}, err
+	}
+	if err := c.saveToken(token); err != nil {
 		return domain.GiteeConnectionPreview{}, err
 	}
 	if config.DeviceID == "" {
@@ -993,6 +1107,9 @@ func (c *cloudSync) pendingConnectionPreview(ctx context.Context) (domain.GiteeC
 	}
 	if user.Login != config.Owner {
 		return domain.GiteeConnectionPreview{}, errors.New("当前令牌对应的 Gitee 账号与待确认账号不一致")
+	}
+	if _, _, err := c.checkRemoteCompatibility(ctx, client, config); err != nil {
+		return domain.GiteeConnectionPreview{}, err
 	}
 	local, err := c.localSummary()
 	if err != nil {
@@ -1043,21 +1160,35 @@ func (c *cloudSync) confirmConnection(ctx context.Context, mode string) (domain.
 	if !config.InitialSyncPending {
 		return c.status()
 	}
+	token, err := c.readToken()
+	if err != nil {
+		return domain.CloudSyncStatus{}, err
+	}
+	client := c.client(token)
+	if _, _, err := c.checkRemoteCompatibility(ctx, client, config); err != nil {
+		var updateRequired *compatibilityUpdateRequiredError
+		if errors.As(err, &updateRequired) {
+			c.setState("update_required", updateRequired.Error())
+		} else {
+			var unavailable *compatibilityUnavailableError
+			if errors.As(err, &unavailable) {
+				c.setState("compatibility_unavailable", unavailable.Error())
+			}
+		}
+		status, _ := c.status()
+		return status, err
+	}
 	// A user may have removed the dedicated Offer Atlas repositories after a
 	// broken remote log.  When the confirmation explicitly selects upload and
 	// the newly connected primary repository is empty, the old local tracking
 	// history must not make the upload look complete.  Reset only synchronization
 	// metadata; business tables and local attachment files remain untouched.
 	if mode == "upload" {
-		token, tokenErr := c.readToken()
-		if tokenErr != nil {
-			return domain.CloudSyncStatus{}, tokenErr
-		}
-		cloud, summaryErr := c.remoteSummary(ctx, c.client(token), config.Owner, config.PrimaryRepo)
+		cloud, summaryErr := c.remoteSummary(ctx, client, config.Owner, config.PrimaryRepo)
 		if summaryErr != nil {
 			return domain.CloudSyncStatus{}, fmt.Errorf("确认云端为空以重新上传: %w", summaryErr)
 		}
-		hasHistory, historyErr := c.remoteHasSyncHistory(ctx, c.client(token), config.Owner, config.PrimaryRepo)
+		hasHistory, historyErr := c.remoteHasSyncHistory(ctx, client, config.Owner, config.PrimaryRepo)
 		if historyErr != nil {
 			return domain.CloudSyncStatus{}, fmt.Errorf("检查云端同步历史: %w", historyErr)
 		}
@@ -1330,12 +1461,7 @@ func (c *cloudSync) repoHasMarker(ctx context.Context, client *giteeClient, owne
 	if err != nil {
 		return false
 	}
-	var value struct {
-		Product string `json:"product"`
-		Kind    string `json:"kind"`
-		Format  int    `json:"format"`
-	}
-	return json.Unmarshal(contents, &value) == nil && value.Product == "Offer Atlas" && value.Format == syncFormatVersion && value.Kind == kind
+	return markerMatches(contents, kind)
 }
 
 func (c *cloudSync) ensureRepoMarker(ctx context.Context, client *giteeClient, owner, repo, markerPath, kind string) error {
@@ -1349,8 +1475,8 @@ func (c *cloudSync) ensureRepoMarker(ctx context.Context, client *giteeClient, o
 	if !isGiteeNotFound(err) {
 		return err
 	}
-	marker, marshalErr := json.Marshal(map[string]any{
-		"product": "Offer Atlas", "format": syncFormatVersion, "kind": kind, "created_at": nowString(),
+	marker, marshalErr := json.Marshal(syncRepositoryMarker{
+		Product: "Offer Atlas", Format: syncFormatVersion, Kind: kind, CreatedAt: nowString(),
 	})
 	if marshalErr != nil {
 		return marshalErr
@@ -1367,12 +1493,228 @@ func (c *cloudSync) ensureRepoMarker(ctx context.Context, client *giteeClient, o
 }
 
 func markerMatches(contents []byte, kind string) bool {
-	var value struct {
-		Product string `json:"product"`
-		Kind    string `json:"kind"`
-		Format  int    `json:"format"`
+	marker, err := parseRepositoryMarker(contents, kind)
+	return err == nil && marker.Product == "Offer Atlas" && marker.Format == syncFormatVersion && marker.Kind == kind
+}
+
+func parseRepositoryMarker(contents []byte, kind string) (syncRepositoryMarker, error) {
+	var marker syncRepositoryMarker
+	if err := json.Unmarshal(contents, &marker); err != nil {
+		return syncRepositoryMarker{}, fmt.Errorf("标识文件不是有效 JSON")
 	}
-	return json.Unmarshal(contents, &value) == nil && value.Product == "Offer Atlas" && value.Format == syncFormatVersion && value.Kind == kind
+	if marker.Product != "Offer Atlas" || marker.Format != syncFormatVersion || marker.Kind != kind {
+		return syncRepositoryMarker{}, fmt.Errorf("标识文件不是有效的 Offer Atlas %s 仓库声明", kind)
+	}
+	rawMinimumVersion := strings.TrimSpace(marker.MinimumClientVersion)
+	marker.MinimumClientVersion = normalizeSyncVersion(rawMinimumVersion)
+	if marker.MinimumClientVersion == "" && rawMinimumVersion != "" {
+		return syncRepositoryMarker{}, fmt.Errorf("最低客户端版本格式无效")
+	}
+	marker.RequiredCapabilities = normalizedCapabilities(marker.RequiredCapabilities)
+	if marker.CompatibilityEpoch < 0 {
+		return syncRepositoryMarker{}, fmt.Errorf("兼容性版本号无效")
+	}
+	return marker, nil
+}
+
+func normalizeSyncVersion(value string) string {
+	value = strings.TrimSpace(value)
+	value = strings.TrimPrefix(value, "v")
+	value = strings.TrimPrefix(value, "V")
+	parts := strings.Split(value, ".")
+	if len(parts) != 3 {
+		return ""
+	}
+	for _, part := range parts {
+		if part == "" {
+			return ""
+		}
+		for _, character := range part {
+			if character < '0' || character > '9' {
+				return ""
+			}
+		}
+	}
+	return value
+}
+
+func syncVersionLess(left, right string) bool {
+	left, right = normalizeSyncVersion(left), normalizeSyncVersion(right)
+	if left == "" || right == "" {
+		return false
+	}
+	leftParts, rightParts := strings.Split(left, "."), strings.Split(right, ".")
+	for index := range leftParts {
+		leftNumber, _ := strconv.Atoi(leftParts[index])
+		rightNumber, _ := strconv.Atoi(rightParts[index])
+		if leftNumber != rightNumber {
+			return leftNumber < rightNumber
+		}
+	}
+	return false
+}
+
+func normalizedCapabilities(values []string) []string {
+	seen := make(map[string]bool, len(values))
+	result := make([]string, 0, len(values))
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "" || seen[value] {
+			continue
+		}
+		seen[value] = true
+		result = append(result, value)
+	}
+	sort.Strings(result)
+	return result
+}
+
+func (c *cloudSync) checkRemoteCompatibility(ctx context.Context, client *giteeClient, config syncConfigRow) (syncRepositoryMarker, string, error) {
+	checkCtx, cancel := context.WithTimeout(ctx, compatibilityCheckTimeout)
+	defer cancel()
+	contents, sha, err := client.readFile(checkCtx, config.Owner, config.PrimaryRepo, syncFormatPath)
+	if err != nil {
+		return syncRepositoryMarker{}, "", &compatibilityCheckError{err: err}
+	}
+	marker, err := parseRepositoryMarker(contents, "primary")
+	if err != nil {
+		return syncRepositoryMarker{}, "", &compatibilityUnavailableError{message: "云端兼容性声明无效，已停止同步以保护本地数据：" + err.Error()}
+	}
+	if err := c.cacheRemoteCompatibility(marker); err != nil {
+		return syncRepositoryMarker{}, "", fmt.Errorf("保存云端兼容性状态: %w", err)
+	}
+	if err := c.validateRemoteCompatibility(marker); err != nil {
+		return marker, sha, err
+	}
+	return marker, sha, nil
+}
+
+func (c *cloudSync) cacheRemoteCompatibility(marker syncRepositoryMarker) error {
+	capabilities, err := json.Marshal(normalizedCapabilities(marker.RequiredCapabilities))
+	if err != nil {
+		return err
+	}
+	_, err = c.store.db.Exec(`INSERT INTO sync_compatibility_cache(id, minimum_client_version, required_capabilities, compatibility_epoch, checked_at)
+		VALUES (1, ?, ?, ?, ?)
+		ON CONFLICT(id) DO UPDATE SET minimum_client_version=excluded.minimum_client_version, required_capabilities=excluded.required_capabilities, compatibility_epoch=excluded.compatibility_epoch, checked_at=excluded.checked_at`,
+		marker.MinimumClientVersion, string(capabilities), marker.CompatibilityEpoch, nowString())
+	return err
+}
+
+func (c *cloudSync) cachedRemoteCompatibility() (syncRepositoryMarker, string, error) {
+	var marker syncRepositoryMarker
+	var capabilities string
+	var checkedAt string
+	err := c.store.db.QueryRow(`SELECT minimum_client_version, required_capabilities, compatibility_epoch, checked_at FROM sync_compatibility_cache WHERE id=1`).Scan(
+		&marker.MinimumClientVersion, &capabilities, &marker.CompatibilityEpoch, &checkedAt,
+	)
+	if err == sql.ErrNoRows {
+		return syncRepositoryMarker{}, "", nil
+	}
+	if err != nil {
+		return syncRepositoryMarker{}, "", err
+	}
+	if capabilities != "" && json.Unmarshal([]byte(capabilities), &marker.RequiredCapabilities) != nil {
+		return syncRepositoryMarker{}, "", errors.New("本地云端兼容性缓存无效")
+	}
+	marker.RequiredCapabilities = normalizedCapabilities(marker.RequiredCapabilities)
+	return marker, checkedAt, nil
+}
+
+func (c *cloudSync) validateRemoteCompatibility(marker syncRepositoryMarker) error {
+	missing := missingSyncCapabilities(c.store.syncClient.Capabilities, marker.RequiredCapabilities)
+	if (marker.MinimumClientVersion != "" && syncVersionLess(c.store.syncClient.Version, marker.MinimumClientVersion)) || len(missing) > 0 {
+		return &compatibilityUpdateRequiredError{minimumVersion: marker.MinimumClientVersion, missingCapabilities: missing}
+	}
+	return nil
+}
+
+func missingSyncCapabilities(client, required []string) []string {
+	have := make(map[string]bool, len(client))
+	for _, capability := range client {
+		have[capability] = true
+	}
+	missing := make([]string, 0)
+	for _, capability := range normalizedCapabilities(required) {
+		if !have[capability] {
+			missing = append(missing, capability)
+		}
+	}
+	return missing
+}
+
+func requirementsForOperations(operations []syncOperation) (string, []string) {
+	minimumVersion := ""
+	capabilities := []string{}
+	for _, operation := range operations {
+		spec, ok := syncSpec(operation.ObjectType)
+		if !ok {
+			continue
+		}
+		candidate := normalizeSyncVersion(spec.MinimumClientVersion)
+		if candidate != "" && (minimumVersion == "" || syncVersionLess(minimumVersion, candidate)) {
+			minimumVersion = candidate
+		}
+		capabilities = append(capabilities, spec.RequiredCapabilities...)
+	}
+	return minimumVersion, normalizedCapabilities(capabilities)
+}
+
+func (c *cloudSync) raiseRemoteCompatibilityForPending(ctx context.Context, client *giteeClient, config syncConfigRow, cutoffSequence int64) error {
+	rows, err := c.store.db.Query(`SELECT object_type FROM sync_operations WHERE synced_at='' AND sequence<=?`, cutoffSequence)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	operations := make([]syncOperation, 0)
+	for rows.Next() {
+		var objectType string
+		if err := rows.Scan(&objectType); err != nil {
+			return err
+		}
+		operations = append(operations, syncOperation{ObjectType: objectType})
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	if len(operations) == 0 {
+		return nil
+	}
+	return c.raiseRemoteCompatibilityForOperations(ctx, client, config, operations)
+}
+
+// raiseRemoteCompatibilityForOperations raises requirements before publishing
+// operations that need them. The marker is monotonic, so an older build can
+// never be re-authorized by a later sync.
+func (c *cloudSync) raiseRemoteCompatibilityForOperations(ctx context.Context, client *giteeClient, config syncConfigRow, operations []syncOperation) error {
+	minimumVersion, capabilities := requirementsForOperations(operations)
+	marker, sha, err := c.checkRemoteCompatibility(ctx, client, config)
+	if err != nil {
+		return err
+	}
+	changed := false
+	if minimumVersion != "" && (marker.MinimumClientVersion == "" || syncVersionLess(marker.MinimumClientVersion, minimumVersion)) {
+		marker.MinimumClientVersion = minimumVersion
+		changed = true
+	}
+	combinedCapabilities := normalizedCapabilities(append(marker.RequiredCapabilities, capabilities...))
+	if strings.Join(combinedCapabilities, "\x00") != strings.Join(marker.RequiredCapabilities, "\x00") {
+		marker.RequiredCapabilities = combinedCapabilities
+		changed = true
+	}
+	if !changed {
+		return nil
+	}
+	marker.CompatibilityEpoch++
+	marker.UpdatedAt = nowString()
+	contents, err := json.Marshal(marker)
+	if err != nil {
+		return err
+	}
+	if err := client.writeFile(ctx, config.Owner, config.PrimaryRepo, syncFormatPath, "Raise Offer Atlas sync compatibility requirement", contents, sha); err != nil {
+		return fmt.Errorf("更新云端兼容性声明: %w", err)
+	}
+	return c.cacheRemoteCompatibility(marker)
 }
 
 func isGiteeNotFound(err error) bool {

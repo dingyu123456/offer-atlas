@@ -1273,6 +1273,133 @@ func TestGiteeSequentialMergeAndVersionForkConflict(t *testing.T) {
 	}
 }
 
+func TestCloudSyncCompatibilityGateBlocksTransferBeforePullAndUpload(t *testing.T) {
+	server := newFakeGitee(t)
+	defer server.Close()
+
+	source, err := Open(pathJoinTemp(t, "compat-source.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer source.Close()
+	source.cloud.clientFactory = func(token string) *giteeClient {
+		return newGiteeClient(token).withBaseURL(server.URL() + "/api/v5")
+	}
+	if _, err := source.SaveCompany(domain.CompanyInput{Name: "Compatibility Source"}); err != nil {
+		t.Fatal(err)
+	}
+	_, err = source.ConnectGitee(context.Background(), "same-token")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := source.ConfirmGiteeConnection(context.Background(), "upload"); err != nil {
+		t.Fatal(err)
+	}
+
+	target, err := Open(pathJoinTemp(t, "compat-target.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer target.Close()
+	target.cloud.clientFactory = func(token string) *giteeClient {
+		return newGiteeClient(token).withBaseURL(server.URL() + "/api/v5")
+	}
+	preview, err := target.ConnectGitee(context.Background(), "same-token")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := target.ConfirmGiteeConnection(context.Background(), "download"); err != nil {
+		t.Fatal(err)
+	}
+
+	marker, err := json.Marshal(syncRepositoryMarker{
+		Product: "Offer Atlas", Format: syncFormatVersion, Kind: "primary", CreatedAt: nowString(),
+		MinimumClientVersion: "9.0.0", RequiredCapabilities: []string{"future-sync-v1"}, CompatibilityEpoch: 1,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	server.mu.Lock()
+	server.repos[preview.PrimaryRepo][syncFormatPath] = marker
+	server.mu.Unlock()
+	if _, err := target.SaveCompany(domain.CompanyInput{Name: "Blocked Local Change"}); err != nil {
+		t.Fatal(err)
+	}
+	beforeFiles := server.countPrefix(preview.PrimaryRepo, "operations/")
+	server.resetOperationReads()
+	if _, err := target.SyncGiteeNow(context.Background()); err == nil {
+		t.Fatal("expected cloud compatibility gate to block the sync")
+	}
+	status, err := target.CloudSyncStatus()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if status.State != "update_required" || status.CanSync || status.MinimumClientVersion != "9.0.0" {
+		t.Fatalf("unexpected compatibility-blocked status: %#v", status)
+	}
+	if reads := server.operationReadCount(); reads != 0 {
+		t.Fatalf("compatibility gate must run before reading operation files, got %d reads", reads)
+	}
+	if afterFiles := server.countPrefix(preview.PrimaryRepo, "operations/"); afterFiles != beforeFiles {
+		t.Fatalf("compatibility gate must run before upload, files before=%d after=%d", beforeFiles, afterFiles)
+	}
+}
+
+func TestCloudSyncCompatibilityCacheNeverAuthorizesOfflineTransfer(t *testing.T) {
+	server := newFakeGitee(t)
+	defer server.Close()
+
+	store, err := Open(pathJoinTemp(t, "compat-cache.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	store.cloud.clientFactory = func(token string) *giteeClient {
+		return newGiteeClient(token).withBaseURL(server.URL() + "/api/v5")
+	}
+	if _, err := store.SaveCompany(domain.CompanyInput{Name: "Cache Guard Co."}); err != nil {
+		t.Fatal(err)
+	}
+	preview, err := store.ConnectGitee(context.Background(), "same-token")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.ConfirmGiteeConnection(context.Background(), "upload"); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := store.cloud.cachedRemoteCompatibility(); err != nil {
+		t.Fatalf("read compatibility cache: %v", err)
+	}
+	if _, err := store.SaveCompany(domain.CompanyInput{Name: "Cache Guard Pending"}); err != nil {
+		t.Fatal(err)
+	}
+	beforeFiles := server.countPrefix(preview.PrimaryRepo, "operations/")
+	server.resetOperationReads()
+	server.failReadOnce(preview.PrimaryRepo, syncFormatPath)
+	config, err := store.cloud.config()
+	if err != nil {
+		t.Fatal(err)
+	}
+	cutoff, err := store.cloud.pendingSequenceCutoff()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.cloud.syncOnce(context.Background(), config, cutoff); err == nil {
+		t.Fatal("expected marker read failure")
+	} else {
+		var compatibilityErr *compatibilityCheckError
+		if !errors.As(err, &compatibilityErr) {
+			t.Fatalf("expected compatibility check error, got %v", err)
+		}
+	}
+	if reads := server.operationReadCount(); reads != 0 {
+		t.Fatalf("cached compatibility must not authorize an offline pull, got %d reads", reads)
+	}
+	if afterFiles := server.countPrefix(preview.PrimaryRepo, "operations/"); afterFiles != beforeFiles {
+		t.Fatalf("cached compatibility must not authorize an offline upload, files before=%d after=%d", beforeFiles, afterFiles)
+	}
+}
+
 func pathJoinTemp(t *testing.T, name string) string { return path.Join(t.TempDir(), name) }
 
 // OS helpers are variables only to keep this test focused on sync behavior.

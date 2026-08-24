@@ -585,27 +585,29 @@ type BackupCenter struct {
 // CloudSyncStatus deliberately contains no credential material. The Gitee
 // personal token is held outside SQLite in a Windows DPAPI protected file.
 type CloudSyncStatus struct {
-	State          string `json:"state"`
-	Activity       string `json:"activity"`
-	Message        string `json:"message"`
-	Owner          string `json:"owner"`
-	PrimaryRepo    string `json:"primaryRepo"`
-	DeviceName     string `json:"deviceName"`
-	LastSuccessAt  string `json:"lastSuccessAt"`
-	LastCheckedAt  string `json:"lastCheckedAt"`
-	PendingChanges int    `json:"pendingChanges"`
-	ActiveChanges  int    `json:"activeChanges"`
-	QueuedChanges  int    `json:"queuedChanges"`
-	ConflictCount  int    `json:"conflictCount"`
-	CanSync        bool   `json:"canSync"`
-	ProgressDone   int    `json:"progressDone"`
-	ProgressTotal  int    `json:"progressTotal"`
-	FilesDone      int    `json:"filesDone"`
-	FilesTotal     int    `json:"filesTotal"`
-	RetryAttempt   int    `json:"retryAttempt"`
-	RetryMax       int    `json:"retryMax"`
-	RetryError     string `json:"retryError"`
-	RetryAfter     int    `json:"retryAfter"`
+	State                string   `json:"state"`
+	Activity             string   `json:"activity"`
+	Message              string   `json:"message"`
+	Owner                string   `json:"owner"`
+	PrimaryRepo          string   `json:"primaryRepo"`
+	DeviceName           string   `json:"deviceName"`
+	LastSuccessAt        string   `json:"lastSuccessAt"`
+	LastCheckedAt        string   `json:"lastCheckedAt"`
+	PendingChanges       int      `json:"pendingChanges"`
+	ActiveChanges        int      `json:"activeChanges"`
+	QueuedChanges        int      `json:"queuedChanges"`
+	ConflictCount        int      `json:"conflictCount"`
+	CanSync              bool     `json:"canSync"`
+	ProgressDone         int      `json:"progressDone"`
+	ProgressTotal        int      `json:"progressTotal"`
+	FilesDone            int      `json:"filesDone"`
+	FilesTotal           int      `json:"filesTotal"`
+	RetryAttempt         int      `json:"retryAttempt"`
+	RetryMax             int      `json:"retryMax"`
+	RetryError           string   `json:"retryError"`
+	RetryAfter           int      `json:"retryAfter"`
+	MinimumClientVersion string   `json:"minimumClientVersion"`
+	RequiredCapabilities []string `json:"requiredCapabilities"`
 }
 
 type SyncDataSummary struct {
