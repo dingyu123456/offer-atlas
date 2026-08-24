@@ -6,7 +6,7 @@ import (
 	"github.com/dingyu/offer-atlas/internal/domain"
 )
 
-const schemaVersion = 17
+const schemaVersion = 19
 
 func migrate(db *sql.DB) error {
 	if _, err := db.Exec(`
@@ -121,6 +121,19 @@ func migrate(db *sql.DB) error {
 		if err := applyMigration(db, 17, giteeSyncCursorSchema); err != nil {
 			return err
 		}
+		current = 17
+	}
+	if current < 18 {
+		if err := applyMigration(db, 18, resumeScreeningStageTypeSchema); err != nil {
+			return err
+		}
+		current = 18
+	}
+	if current < 19 {
+		if err := applyMigration(db, 19, resourceLinksAndAttachmentsSchema); err != nil {
+			return err
+		}
+		current = 19
 	}
 	if err := ensurePositionSourceURL(db); err != nil {
 		return err
@@ -377,6 +390,49 @@ const applicationResumeSchema = `
 	CREATE INDEX idx_application_resumes_application_id ON application_resumes(application_id);
 `
 
+// Resume screening is a stable, record-only system type. It intentionally
+// has no date semantics, so it can represent both a pending review and a
+// resume rejection without creating calendar noise.
+const resumeScreeningStageTypeSchema = `
+	UPDATE stage_types
+	SET name = name || '（自定义-' || substr(id, 1, 8) || '）'
+	WHERE id <> 'resume_screening' AND name = '简历筛选';
+
+	INSERT OR IGNORE INTO stage_types(id, name, created_at, updated_at) VALUES
+		('resume_screening', '简历筛选', strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), strftime('%Y-%m-%dT%H:%M:%fZ', 'now'));
+`
+
+// Related links and supplemental attachments are intentionally polymorphic.
+// Existing position attachments are not migrated: their familiar storage and
+// sync representation remain unchanged, while new materials serve the other
+// record levels without changing old data.
+const resourceLinksAndAttachmentsSchema = `
+	CREATE TABLE resource_links (
+		id TEXT PRIMARY KEY,
+		owner_type TEXT NOT NULL CHECK(owner_type IN ('company', 'campaign', 'position', 'application', 'stage')),
+		owner_id TEXT NOT NULL,
+		name TEXT NOT NULL,
+		url TEXT NOT NULL,
+		sort_order INTEGER NOT NULL DEFAULT 0,
+		created_at TEXT NOT NULL,
+		updated_at TEXT NOT NULL
+	);
+	CREATE INDEX idx_resource_links_owner ON resource_links(owner_type, owner_id, sort_order, created_at);
+
+	CREATE TABLE supplemental_attachments (
+		id TEXT PRIMARY KEY,
+		owner_type TEXT NOT NULL CHECK(owner_type IN ('company', 'campaign', 'application', 'stage')),
+		owner_id TEXT NOT NULL,
+		original_name TEXT NOT NULL,
+		stored_name TEXT NOT NULL,
+		mime_type TEXT NOT NULL DEFAULT 'application/octet-stream',
+		size_bytes INTEGER NOT NULL CHECK(size_bytes >= 0),
+		created_at TEXT NOT NULL,
+		UNIQUE(owner_type, owner_id, stored_name)
+	);
+	CREATE INDEX idx_supplemental_attachments_owner ON supplemental_attachments(owner_type, owner_id, created_at DESC);
+`
+
 // The Gitee token deliberately does not live in this schema. It is protected
 // separately with Windows DPAPI, while this table set only keeps non-secret
 // synchronization metadata and immutable object operations.
@@ -509,6 +565,7 @@ const resumeLibrarySchema = `
 
 func ensureSystemStageTypes(db *sql.DB) error {
 	labels := map[domain.StageType]string{
+		domain.StageResumeScreening: "简历筛选",
 		domain.StageWrittenTest:     "笔试",
 		domain.StageAssessment:      "测评",
 		domain.StageAIInterview:     "AI 面",
@@ -528,8 +585,8 @@ func ensureSystemStageTypes(db *sql.DB) error {
 	if _, err := tx.Exec(`
 		UPDATE stage_types
 		SET name = name || '（自定义-' || substr(id, 1, 8) || '）'
-		WHERE id NOT IN ('written_test', 'assessment', 'ai_interview', 'first_interview', 'second_interview', 'third_interview', 'fourth_interview', 'hr_interview', 'offer')
-		  AND name IN ('笔试', '测评', 'AI 面', '一面', '二面', '三面', '四面', 'HR 面', 'Offer')
+		WHERE id NOT IN ('resume_screening', 'written_test', 'assessment', 'ai_interview', 'first_interview', 'second_interview', 'third_interview', 'fourth_interview', 'hr_interview', 'offer')
+		  AND name IN ('简历筛选', '笔试', '测评', 'AI 面', '一面', '二面', '三面', '四面', 'HR 面', 'Offer')
 	`); err != nil {
 		return err
 	}

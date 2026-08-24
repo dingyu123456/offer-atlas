@@ -21,6 +21,7 @@ const maxInlineImageBytes int64 = 12 * 1024 * 1024
 
 type attachmentFileRef struct {
 	Kind       string
+	OwnerType  string
 	OwnerID    string
 	StoredName string
 }
@@ -855,12 +856,14 @@ func (s *Store) attachmentFileRefs(queryer interface {
 	Query(query string, args ...any) (*sql.Rows, error)
 }) ([]attachmentFileRef, error) {
 	rows, err := queryer.Query(`
-		SELECT 'positions', position_id, stored_name FROM position_attachments
+		SELECT 'positions', '', position_id, stored_name FROM position_attachments
 		UNION ALL
-		SELECT 'resumes', '', stored_name FROM resumes
+		SELECT 'resumes', '', '', stored_name FROM resumes
 		UNION ALL
-		SELECT 'applications', application_id, stored_name FROM application_resumes
-		ORDER BY 1, 2, 3
+		SELECT 'applications', '', application_id, stored_name FROM application_resumes
+		UNION ALL
+		SELECT 'resources', owner_type, owner_id, stored_name FROM supplemental_attachments
+		ORDER BY 1, 2, 3, 4
 	`)
 	if err != nil {
 		return nil, err
@@ -869,7 +872,7 @@ func (s *Store) attachmentFileRefs(queryer interface {
 	refs := make([]attachmentFileRef, 0)
 	for rows.Next() {
 		var ref attachmentFileRef
-		if err := rows.Scan(&ref.Kind, &ref.OwnerID, &ref.StoredName); err != nil {
+		if err := rows.Scan(&ref.Kind, &ref.OwnerType, &ref.OwnerID, &ref.StoredName); err != nil {
 			return nil, err
 		}
 		refs = append(refs, ref)
@@ -888,6 +891,8 @@ func (s *Store) copyCurrentAttachmentFiles(destination string, refs []attachment
 			sourcePath, err = s.resumePath(ref.StoredName)
 		case "applications":
 			sourcePath, err = s.applicationResumePath(ref.OwnerID, ref.StoredName)
+		case "resources":
+			sourcePath, err = s.supplementalAttachmentPath(domain.ResourceOwnerType(ref.OwnerType), ref.OwnerID, ref.StoredName)
 		default:
 			return fmt.Errorf("unknown attachment kind %q", ref.Kind)
 		}
@@ -897,6 +902,8 @@ func (s *Store) copyCurrentAttachmentFiles(destination string, refs []attachment
 		targetDirectory := filepath.Join(destination, "attachments", ref.Kind, ref.OwnerID)
 		if ref.Kind == "resumes" {
 			targetDirectory = filepath.Join(destination, "attachments", "resumes")
+		} else if ref.Kind == "resources" {
+			targetDirectory = filepath.Join(destination, "attachments", "resources", ref.OwnerType, ref.OwnerID)
 		}
 		if err := os.MkdirAll(targetDirectory, 0o755); err != nil {
 			return err

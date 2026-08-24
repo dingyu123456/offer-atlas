@@ -42,7 +42,9 @@ var syncObjectSpecs = []syncObjectSpec{
 	{Type: "resume", Table: "resumes", Columns: []string{"id", "name", "original_name", "stored_name", "mime_type", "size_bytes", "content_hash", "archived", "created_at", "updated_at"}, FileKind: "resume"},
 	{Type: "application", Table: "applications", Columns: []string{"id", "position_id", "status", "submitted_on", "resume_id", "resume_name", "next_action", "next_action_on", "notes", "created_at", "updated_at", "channel"}},
 	{Type: "stage", Table: "application_stages", Columns: []string{"id", "application_id", "sort_order", "name", "type", "status", "scheduled_start", "scheduled_end", "result_at", "source_url", "notes", "created_at", "updated_at"}},
+	{Type: "resource_link", Table: "resource_links", Columns: []string{"id", "owner_type", "owner_id", "name", "url", "sort_order", "created_at", "updated_at"}},
 	{Type: "position_attachment", Table: "position_attachments", Columns: []string{"id", "position_id", "original_name", "stored_name", "mime_type", "size_bytes", "created_at"}, FileKind: "position"},
+	{Type: "resource_attachment", Table: "supplemental_attachments", Columns: []string{"id", "owner_type", "owner_id", "original_name", "stored_name", "mime_type", "size_bytes", "created_at"}, FileKind: "resource"},
 	// Kept only for importing operation records produced by older versions.
 	{Type: "application_resume", Table: "application_resumes", Columns: []string{"id", "application_id", "original_name", "stored_name", "mime_type", "size_bytes", "created_at"}, FileKind: "legacy_resume"},
 }
@@ -1213,12 +1215,15 @@ func (c *cloudSync) localSummary() (domain.SyncDataSummary, error) {
 		table       string
 	}{
 		{&result.Companies, "companies"}, {&result.Campaigns, "campaigns"}, {&result.Positions, "positions"},
-		{&result.Applications, "applications"}, {&result.Stages, "application_stages"}, {&result.Attachments, "position_attachments"}, {&result.Resumes, "resumes"},
+		{&result.Applications, "applications"}, {&result.Stages, "application_stages"}, {&result.Resumes, "resumes"},
 	}
 	for _, item := range queries {
 		if err := c.store.db.QueryRow(`SELECT COUNT(*) FROM ` + item.table).Scan(item.destination); err != nil {
 			return domain.SyncDataSummary{}, err
 		}
+	}
+	if err := c.store.db.QueryRow(`SELECT (SELECT COUNT(*) FROM position_attachments) + (SELECT COUNT(*) FROM supplemental_attachments)`).Scan(&result.Attachments); err != nil {
+		return domain.SyncDataSummary{}, err
 	}
 	return result, nil
 }
@@ -1430,7 +1435,7 @@ func (c *cloudSync) remoteSummary(ctx context.Context, client *giteeClient, owne
 			result.Applications++
 		case "stage":
 			result.Stages++
-		case "position_attachment":
+		case "position_attachment", "resource_attachment":
 			result.Attachments++
 		case "resume", "application_resume":
 			result.Resumes++
@@ -1755,6 +1760,8 @@ func fileKindLabel(kind string) string {
 		return "position attachment"
 	case "legacy_resume":
 		return "application resume"
+	case "resource":
+		return "supplemental attachment"
 	default:
 		return "attachment"
 	}
@@ -1778,6 +1785,11 @@ func (c *cloudSync) filePathForPayload(spec syncObjectSpec, payload map[string]a
 			if queryErr := c.store.db.QueryRow(`SELECT application_id, stored_name FROM application_resumes WHERE id=?`, id).Scan(&applicationID, &storedName); queryErr == nil {
 				return c.store.applicationResumePath(applicationID, storedName)
 			}
+		case "resource":
+			var ownerType, ownerID, storedName string
+			if queryErr := c.store.db.QueryRow(`SELECT owner_type, owner_id, stored_name FROM supplemental_attachments WHERE id=?`, id).Scan(&ownerType, &ownerID, &storedName); queryErr == nil {
+				return c.store.supplementalAttachmentPath(domain.ResourceOwnerType(ownerType), ownerID, storedName)
+			}
 		}
 	}
 	return c.rawFilePathForPayload(spec, payload)
@@ -1799,6 +1811,8 @@ func (c *cloudSync) rawFilePathForPayload(spec syncObjectSpec, payload map[strin
 		return c.store.resumePath(storedName)
 	case "legacy_resume":
 		return c.store.applicationResumePath(stringValue(payload["application_id"]), stringValue(payload["stored_name"]))
+	case "resource":
+		return c.store.supplementalAttachmentPath(domain.ResourceOwnerType(stringValue(payload["owner_type"])), stringValue(payload["owner_id"]), stringValue(payload["stored_name"]))
 	default:
 		return "", fmt.Errorf("unknown attachment kind %q", spec.FileKind)
 	}

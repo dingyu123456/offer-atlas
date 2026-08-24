@@ -728,6 +728,12 @@ func TestGiteeSyncRestoresAttachmentAndResumeThroughMediaIndex(t *testing.T) {
 	if _, err := first.ImportPositionAttachmentData(position.ID, "JD.png", "image/png", []byte("position-attachment-contents")); err != nil {
 		t.Fatal(err)
 	}
+	if _, err := first.SaveResourceLinks(domain.ResourceOwnerApplication, application.ID, []domain.ResourceLinkInput{{Name: "投递流程", URL: "https://jobs.example.com/flow"}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := first.ImportSupplementalAttachmentData(domain.ResourceOwnerApplication, application.ID, "notice.png", "image/png", []byte("supplemental-attachment-contents")); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := first.ImportApplicationResumeData(application.ID, "resume.pdf", "application/pdf", []byte("resume-contents")); err != nil {
 		t.Fatal(err)
 	}
@@ -738,7 +744,7 @@ func TestGiteeSyncRestoresAttachmentAndResumeThroughMediaIndex(t *testing.T) {
 	if _, err := first.ConfirmGiteeConnection(context.Background(), "upload"); err != nil {
 		t.Fatal(err)
 	}
-	if server.countPrefix(preview.PrimaryRepo, "media-index/") != 2 || server.countPrefix("offer-atlas-media-001", "media/") != 2 {
+	if server.countPrefix(preview.PrimaryRepo, "media-index/") != 3 || server.countPrefix("offer-atlas-media-001", "media/") != 3 {
 		t.Fatal("attachments were not indexed and stored in the media repository")
 	}
 
@@ -779,6 +785,17 @@ func TestGiteeSyncRestoresAttachmentAndResumeThroughMediaIndex(t *testing.T) {
 	}
 	if contents, _ := os.ReadFile(resumePath); string(contents) != "resume-contents" {
 		t.Fatalf("resume content did not restore: %q", contents)
+	}
+	applicationDetail, err := second.GetApplicationDetail(application.ID)
+	if err != nil || len(applicationDetail.Links) != 1 || applicationDetail.Links[0].Name != "投递流程" || len(applicationDetail.Attachments) != 1 {
+		t.Fatalf("supplemental metadata did not restore: %#v, %v", applicationDetail, err)
+	}
+	supplementalPath, err := second.SupplementalAttachmentPath(applicationDetail.Attachments[0].ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if contents, _ := os.ReadFile(supplementalPath); string(contents) != "supplemental-attachment-contents" {
+		t.Fatalf("supplemental attachment content did not restore: %q", contents)
 	}
 	if server.operationReadCount() == 0 {
 		t.Fatal("initial download should read remote operation contents")

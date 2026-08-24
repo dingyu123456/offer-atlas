@@ -111,6 +111,50 @@ func (s *Store) ListCompanies() ([]domain.Company, error) {
 	return items, rows.Err()
 }
 
+func (s *Store) DirectoryStats() (domain.DirectoryStats, error) {
+	stats := domain.DirectoryStats{}
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM companies`).Scan(&stats.CompanyCount); err != nil {
+		return domain.DirectoryStats{}, err
+	}
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM campaigns`).Scan(&stats.CampaignCount); err != nil {
+		return domain.DirectoryStats{}, err
+	}
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM positions`).Scan(&stats.PositionCount); err != nil {
+		return domain.DirectoryStats{}, err
+	}
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM applications`).Scan(&stats.ApplicationCount); err != nil {
+		return domain.DirectoryStats{}, err
+	}
+	return stats, nil
+}
+
+func (s *Store) GetCompanyDetail(companyID string) (domain.CompanyDetail, error) {
+	company, err := s.companyByID(companyID)
+	if err != nil {
+		return domain.CompanyDetail{}, err
+	}
+	detail := domain.CompanyDetail{Company: company}
+	if detail.Campaigns, err = s.ListCampaigns(companyID); err != nil {
+		return domain.CompanyDetail{}, err
+	}
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM campaigns WHERE company_id=?`, companyID).Scan(&detail.CampaignCount); err != nil {
+		return domain.CompanyDetail{}, err
+	}
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM positions p JOIN campaigns c ON c.id=p.campaign_id WHERE c.company_id=?`, companyID).Scan(&detail.PositionCount); err != nil {
+		return domain.CompanyDetail{}, err
+	}
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM applications a JOIN positions p ON p.id=a.position_id JOIN campaigns c ON c.id=p.campaign_id WHERE c.company_id=?`, companyID).Scan(&detail.ApplicationCount); err != nil {
+		return domain.CompanyDetail{}, err
+	}
+	if detail.Links, err = s.listResourceLinks(domain.ResourceOwnerCompany, companyID); err != nil {
+		return domain.CompanyDetail{}, err
+	}
+	if detail.Attachments, err = s.listSupplementalAttachments(domain.ResourceOwnerCompany, companyID); err != nil {
+		return domain.CompanyDetail{}, err
+	}
+	return detail, nil
+}
+
 func (s *Store) SaveCompany(input domain.CompanyInput) (domain.Company, error) {
 	name := strings.TrimSpace(input.Name)
 	if name == "" {
@@ -160,6 +204,31 @@ func (s *Store) ListCampaigns(companyID string) ([]domain.Campaign, error) {
 		items = append(items, item)
 	}
 	return items, rows.Err()
+}
+
+func (s *Store) GetCampaignDetail(campaignID string) (domain.CampaignDetail, error) {
+	campaign, err := s.campaignByID(campaignID)
+	if err != nil {
+		return domain.CampaignDetail{}, err
+	}
+	company, err := s.companyByID(campaign.CompanyID)
+	if err != nil {
+		return domain.CampaignDetail{}, err
+	}
+	detail := domain.CampaignDetail{Campaign: campaign, Company: company}
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM positions WHERE campaign_id=?`, campaignID).Scan(&detail.PositionCount); err != nil {
+		return domain.CampaignDetail{}, err
+	}
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM applications a JOIN positions p ON p.id=a.position_id WHERE p.campaign_id=?`, campaignID).Scan(&detail.ApplicationCount); err != nil {
+		return domain.CampaignDetail{}, err
+	}
+	if detail.Links, err = s.listResourceLinks(domain.ResourceOwnerCampaign, campaignID); err != nil {
+		return domain.CampaignDetail{}, err
+	}
+	if detail.Attachments, err = s.listSupplementalAttachments(domain.ResourceOwnerCampaign, campaignID); err != nil {
+		return domain.CampaignDetail{}, err
+	}
+	return detail, nil
 }
 
 func (s *Store) SaveCampaign(input domain.CampaignInput) (domain.Campaign, error) {
@@ -390,6 +459,12 @@ func (s *Store) GetApplicationDetail(applicationID string) (domain.ApplicationDe
 		return domain.ApplicationDetail{}, err
 	}
 	detail := domain.ApplicationDetail{Application: application, Position: position, Company: company, Campaign: campaign, Stages: stages}
+	if detail.Links, err = s.listResourceLinks(domain.ResourceOwnerApplication, applicationID); err != nil {
+		return domain.ApplicationDetail{}, err
+	}
+	if detail.Attachments, err = s.listSupplementalAttachments(domain.ResourceOwnerApplication, applicationID); err != nil {
+		return domain.ApplicationDetail{}, err
+	}
 	if application.ResumeID != "" {
 		resume, resumeErr := s.resumeByID(application.ResumeID)
 		if resumeErr != nil {
@@ -588,12 +663,19 @@ func (s *Store) DeleteEntity(input domain.DeleteInput) error {
 	if err != nil {
 		return err
 	}
+	resourceOwners, err := s.resourceOwnersForDeletion(target, id)
+	if err != nil {
+		return err
+	}
 
 	tx, err := s.db.Begin()
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback()
+	if err := s.deleteResourcesForOwners(tx, resourceOwners); err != nil {
+		return err
+	}
 
 	switch target {
 	case domain.DeletionTargetCompany:
@@ -643,6 +725,7 @@ func (s *Store) DeleteEntity(input domain.DeleteInput) error {
 	}
 	s.cleanupPositionAttachmentFiles(positionIDs)
 	s.cleanupApplicationResumeFiles(applicationIDs)
+	s.cleanupSupplementalAttachmentFiles(resourceOwners)
 	s.syncSafetyMirror(string(target)+".deleted", id)
 	return nil
 }
@@ -759,7 +842,19 @@ func (s *Store) ListApplicationStages(applicationID string) ([]domain.Applicatio
 		return nil, err
 	}
 	defer rows.Close()
-	return scanStages(rows)
+	items, err := scanStages(rows)
+	if err != nil {
+		return nil, err
+	}
+	for index := range items {
+		if items[index].Links, err = s.listResourceLinks(domain.ResourceOwnerStage, items[index].ID); err != nil {
+			return nil, err
+		}
+		if items[index].Attachments, err = s.listSupplementalAttachments(domain.ResourceOwnerStage, items[index].ID); err != nil {
+			return nil, err
+		}
+	}
+	return items, nil
 }
 
 // ListScheduleItems expands stage appointments and result notifications into
@@ -804,6 +899,9 @@ func (s *Store) listScheduleItems(filter domain.ScheduleFilter, now time.Time) (
 		stage, item, err := scanScheduleStage(rows)
 		if err != nil {
 			return nil, err
+		}
+		if domain.IsUnscheduledStageType(stage.Type) {
+			continue
 		}
 		if stage.ScheduledStart != nil && scheduleWithinRange(*stage.ScheduledStart, from, to) {
 			items = append(items, makeScheduleItem(stage, item, "stage", *stage.ScheduledStart, stage.ScheduledEnd, now))
@@ -868,6 +966,9 @@ func (s *Store) SaveApplicationStage(input domain.ApplicationStageInput) (domain
 	if start != nil && end != nil && !sameInputCalendarDay(input.ScheduledStart, input.ScheduledEnd, *start, *end) {
 		return domain.ApplicationStage{}, errors.New("scheduled start and end must be on the same day")
 	}
+	if domain.IsUnscheduledStageType(stageType) && (start != nil || end != nil || resultAt != nil) {
+		return domain.ApplicationStage{}, errors.New("resume screening does not support scheduled or result notification times")
+	}
 	if err := validateResultTiming(resultAt, start, end); err != nil {
 		return domain.ApplicationStage{}, err
 	}
@@ -908,9 +1009,9 @@ func (s *Store) SaveApplicationStage(input domain.ApplicationStageInput) (domain
 
 func (s *Store) ListStageTypes() ([]domain.StageTypeDefinition, error) {
 	rows, err := s.db.Query(`SELECT id, name, created_at, updated_at FROM stage_types ORDER BY CASE id
-		WHEN 'written_test' THEN 1 WHEN 'assessment' THEN 2 WHEN 'ai_interview' THEN 3
-		WHEN 'first_interview' THEN 4 WHEN 'second_interview' THEN 5 WHEN 'third_interview' THEN 6
-		WHEN 'fourth_interview' THEN 7 WHEN 'hr_interview' THEN 8 WHEN 'offer' THEN 9 ELSE 10 END, name COLLATE NOCASE`)
+		WHEN 'resume_screening' THEN 1 WHEN 'written_test' THEN 2 WHEN 'assessment' THEN 3 WHEN 'ai_interview' THEN 4
+		WHEN 'first_interview' THEN 5 WHEN 'second_interview' THEN 6 WHEN 'third_interview' THEN 7
+		WHEN 'fourth_interview' THEN 8 WHEN 'hr_interview' THEN 9 WHEN 'offer' THEN 10 ELSE 11 END, name COLLATE NOCASE`)
 	if err != nil {
 		return nil, err
 	}
@@ -1009,13 +1110,25 @@ func (s *Store) DeleteApplicationStage(id string) error {
 		}
 		return err
 	}
-	result, err := s.db.Exec(`DELETE FROM application_stages WHERE id=?`, id)
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if err := s.deleteResourcesForOwners(tx, []resourceOwnerRef{{Type: domain.ResourceOwnerStage, ID: id}}); err != nil {
+		return err
+	}
+	result, err := tx.Exec(`DELETE FROM application_stages WHERE id=?`, id)
 	if err != nil {
 		return err
 	}
 	if affected, _ := result.RowsAffected(); affected == 0 {
 		return fmt.Errorf("application stage %q was not found", id)
 	}
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	s.cleanupSupplementalAttachmentFiles([]resourceOwnerRef{{Type: domain.ResourceOwnerStage, ID: id}})
 	if err := s.refreshApplicationStatus(applicationID); err != nil {
 		return err
 	}
@@ -1154,6 +1267,9 @@ func (s *Store) GetPositionDetail(positionID string) (domain.PositionDetail, err
 		return domain.PositionDetail{}, err
 	}
 	detail := domain.PositionDetail{Position: position, Status: domain.PositionUnapplied, Campaign: campaign, Company: company, Attachments: attachments}
+	if detail.Links, err = s.listResourceLinks(domain.ResourceOwnerPosition, positionID); err != nil {
+		return domain.PositionDetail{}, err
+	}
 
 	application, err := s.applicationByPositionID(positionID)
 	if err == sql.ErrNoRows {
@@ -1207,6 +1323,9 @@ func (s *Store) Dashboard(now time.Time) (domain.Dashboard, error) {
 		return domain.Dashboard{}, err
 	}
 	if dashboard.WrittenTestStats, err = s.stageProgressStats(domain.StageWrittenTest); err != nil {
+		return domain.Dashboard{}, err
+	}
+	if dashboard.ResumeScreeningStats, err = s.stageProgressStats(domain.StageResumeScreening); err != nil {
 		return domain.Dashboard{}, err
 	}
 	if dashboard.AssessmentStats, err = s.stageProgressStats(domain.StageAssessment); err != nil {
@@ -1672,6 +1791,8 @@ func applicationOrderBy(sortBy, sortOrder string) (string, error) {
 
 func systemStageTypeLabel(stageType domain.StageType) string {
 	switch stageType {
+	case domain.StageResumeScreening:
+		return "简历筛选"
 	case domain.StageWrittenTest:
 		return "笔试"
 	case domain.StageAssessment:

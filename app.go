@@ -217,12 +217,24 @@ func (a *App) ListCompanies() ([]domain.Company, error) {
 	return a.store.ListCompanies()
 }
 
+func (a *App) DirectoryStats() (domain.DirectoryStats, error) {
+	return a.store.DirectoryStats()
+}
+
+func (a *App) GetCompanyDetail(companyID string) (domain.CompanyDetail, error) {
+	return a.store.GetCompanyDetail(companyID)
+}
+
 func (a *App) SaveCompany(input domain.CompanyInput) (domain.Company, error) {
 	return a.store.SaveCompany(input)
 }
 
 func (a *App) ListCampaigns(companyID string) ([]domain.Campaign, error) {
 	return a.store.ListCampaigns(companyID)
+}
+
+func (a *App) GetCampaignDetail(campaignID string) (domain.CampaignDetail, error) {
+	return a.store.GetCampaignDetail(campaignID)
 }
 
 func (a *App) SaveCampaign(input domain.CampaignInput) (domain.Campaign, error) {
@@ -455,6 +467,56 @@ func (a *App) DeleteApplicationResume(applicationID string) error {
 
 func (a *App) DeletePositionAttachment(id string) error {
 	return a.store.DeletePositionAttachment(id)
+}
+
+func (a *App) ListResourceLinks(ownerType domain.ResourceOwnerType, ownerID string) ([]domain.ResourceLink, error) {
+	return a.store.ListResourceLinks(ownerType, ownerID)
+}
+
+func (a *App) SaveResourceLinks(ownerType domain.ResourceOwnerType, ownerID string, links []domain.ResourceLinkInput) ([]domain.ResourceLink, error) {
+	return a.store.SaveResourceLinks(ownerType, ownerID, links)
+}
+
+func (a *App) ListSupplementalAttachments(ownerType domain.ResourceOwnerType, ownerID string) ([]domain.SupplementalAttachment, error) {
+	return a.store.ListSupplementalAttachments(ownerType, ownerID)
+}
+
+func (a *App) UploadSupplementalAttachment(ownerType domain.ResourceOwnerType, ownerID, originalName, dataURL string) ([]domain.SupplementalAttachment, error) {
+	mimeType, contents, err := attachmentDataURL(dataURL)
+	if err != nil {
+		return nil, fmt.Errorf("decode attachment: %w", err)
+	}
+	return a.store.ImportSupplementalAttachmentData(ownerType, ownerID, originalName, mimeType, contents)
+}
+
+func (a *App) PasteSupplementalImage(ownerType domain.ResourceOwnerType, ownerID, originalName, dataURL string) ([]domain.SupplementalAttachment, error) {
+	mimeType, contents, err := attachmentDataURL(dataURL)
+	if err != nil {
+		return nil, fmt.Errorf("decode clipboard image: %w", err)
+	}
+	if !isPastedImageMIMEType(mimeType) {
+		return nil, fmt.Errorf("clipboard data is not a supported image")
+	}
+	return a.store.ImportPastedSupplementalImage(ownerType, ownerID, originalName, mimeType, contents)
+}
+
+func (a *App) SupplementalAttachmentDataURL(id string) (string, error) {
+	return a.store.SupplementalAttachmentDataURL(id)
+}
+
+func (a *App) OpenSupplementalAttachment(id string) error {
+	path, err := a.store.SupplementalAttachmentPath(id)
+	if err != nil {
+		return err
+	}
+	if stdruntime.GOOS != "windows" {
+		return fmt.Errorf("opening attachments is currently supported on Windows only")
+	}
+	return exec.Command("rundll32.exe", "url.dll,FileProtocolHandler", path).Start()
+}
+
+func (a *App) DeleteSupplementalAttachment(id string) error {
+	return a.store.DeleteSupplementalAttachment(id)
 }
 
 func (a *App) CreateBackup() (string, error) {

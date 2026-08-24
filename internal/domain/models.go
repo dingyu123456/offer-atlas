@@ -33,6 +33,7 @@ func ValidApplicationStatus(value ApplicationStatus) bool {
 type StageType string
 
 const (
+	StageResumeScreening StageType = "resume_screening"
 	StageWrittenTest     StageType = "written_test"
 	StageAssessment      StageType = "assessment"
 	StageAIInterview     StageType = "ai_interview"
@@ -52,10 +53,16 @@ const (
 // in recording, filtering, and dashboard statistics.
 func SystemStageTypes() []StageType {
 	return []StageType{
-		StageWrittenTest, StageAssessment, StageAIInterview,
+		StageResumeScreening, StageWrittenTest, StageAssessment, StageAIInterview,
 		StageFirstInterview, StageSecondInterview, StageThirdInterview,
 		StageFourthInterview, StageHRInterview, StageOffer,
 	}
+}
+
+// IsUnscheduledStageType identifies record-only nodes. These nodes carry a
+// manually maintained result but never create calendar or todo occurrences.
+func IsUnscheduledStageType(value StageType) bool {
+	return value == StageResumeScreening
 }
 
 func IsSystemStageType(value StageType) bool {
@@ -100,6 +107,63 @@ func ValidStageStatus(value StageStatus) bool {
 	default:
 		return false
 	}
+}
+
+// ResourceOwnerType identifies an object that can carry user-managed related
+// links. Supplemental attachments are available on every level except a
+// position, which retains its established position-attachment collection.
+type ResourceOwnerType string
+
+const (
+	ResourceOwnerCompany     ResourceOwnerType = "company"
+	ResourceOwnerCampaign    ResourceOwnerType = "campaign"
+	ResourceOwnerPosition    ResourceOwnerType = "position"
+	ResourceOwnerApplication ResourceOwnerType = "application"
+	ResourceOwnerStage       ResourceOwnerType = "stage"
+)
+
+func ValidResourceOwnerType(value ResourceOwnerType) bool {
+	switch value {
+	case ResourceOwnerCompany, ResourceOwnerCampaign, ResourceOwnerPosition, ResourceOwnerApplication, ResourceOwnerStage:
+		return true
+	default:
+		return false
+	}
+}
+
+func SupportsSupplementalAttachments(value ResourceOwnerType) bool {
+	return value == ResourceOwnerCompany || value == ResourceOwnerCampaign || value == ResourceOwnerApplication || value == ResourceOwnerStage
+}
+
+type ResourceLink struct {
+	ID        string            `json:"id"`
+	OwnerType ResourceOwnerType `json:"ownerType"`
+	OwnerID   string            `json:"ownerId"`
+	Name      string            `json:"name"`
+	URL       string            `json:"url"`
+	SortOrder int               `json:"sortOrder"`
+	CreatedAt time.Time         `json:"createdAt"`
+	UpdatedAt time.Time         `json:"updatedAt"`
+}
+
+type ResourceLinkInput struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+	URL  string `json:"url"`
+}
+
+// SupplementalAttachment stores screenshots and files attached to a company,
+// campaign, application, or process stage. Position attachments deliberately
+// remain in the legacy position collection for full data compatibility.
+type SupplementalAttachment struct {
+	ID           string            `json:"id"`
+	OwnerType    ResourceOwnerType `json:"ownerType"`
+	OwnerID      string            `json:"ownerId"`
+	OriginalName string            `json:"originalName"`
+	StoredName   string            `json:"storedName"`
+	MIMEType     string            `json:"mimeType"`
+	SizeBytes    int64             `json:"sizeBytes"`
+	CreatedAt    time.Time         `json:"createdAt"`
 }
 
 type Company struct {
@@ -258,20 +322,22 @@ type ApplicationResume struct {
 }
 
 type ApplicationStage struct {
-	ID             string      `json:"id"`
-	ApplicationID  string      `json:"applicationId"`
-	SortOrder      int         `json:"sortOrder"`
-	Content        string      `json:"content"`
-	Name           string      `json:"-"`
-	Type           StageType   `json:"type"`
-	Status         StageStatus `json:"status"`
-	ScheduledStart *time.Time  `json:"scheduledStart"`
-	ScheduledEnd   *time.Time  `json:"scheduledEnd"`
-	ResultAt       *time.Time  `json:"resultAt"`
-	SourceURL      string      `json:"sourceUrl"`
-	Notes          string      `json:"notes"`
-	CreatedAt      time.Time   `json:"createdAt"`
-	UpdatedAt      time.Time   `json:"updatedAt"`
+	ID             string                   `json:"id"`
+	ApplicationID  string                   `json:"applicationId"`
+	SortOrder      int                      `json:"sortOrder"`
+	Content        string                   `json:"content"`
+	Name           string                   `json:"-"`
+	Type           StageType                `json:"type"`
+	Status         StageStatus              `json:"status"`
+	ScheduledStart *time.Time               `json:"scheduledStart"`
+	ScheduledEnd   *time.Time               `json:"scheduledEnd"`
+	ResultAt       *time.Time               `json:"resultAt"`
+	SourceURL      string                   `json:"sourceUrl"`
+	Notes          string                   `json:"notes"`
+	CreatedAt      time.Time                `json:"createdAt"`
+	UpdatedAt      time.Time                `json:"updatedAt"`
+	Links          []ResourceLink           `json:"links"`
+	Attachments    []SupplementalAttachment `json:"attachments"`
 }
 
 type ApplicationStageInput struct {
@@ -364,6 +430,33 @@ type PositionDetail struct {
 	Resume      *Resume              `json:"resume"`
 	Stages      []ApplicationStage   `json:"stages"`
 	Attachments []PositionAttachment `json:"attachments"`
+	Links       []ResourceLink       `json:"links"`
+}
+
+type CompanyDetail struct {
+	Company          Company                  `json:"company"`
+	Campaigns        []Campaign               `json:"campaigns"`
+	CampaignCount    int                      `json:"campaignCount"`
+	PositionCount    int                      `json:"positionCount"`
+	ApplicationCount int                      `json:"applicationCount"`
+	Links            []ResourceLink           `json:"links"`
+	Attachments      []SupplementalAttachment `json:"attachments"`
+}
+
+type CampaignDetail struct {
+	Campaign         Campaign                 `json:"campaign"`
+	Company          Company                  `json:"company"`
+	PositionCount    int                      `json:"positionCount"`
+	ApplicationCount int                      `json:"applicationCount"`
+	Links            []ResourceLink           `json:"links"`
+	Attachments      []SupplementalAttachment `json:"attachments"`
+}
+
+type DirectoryStats struct {
+	CompanyCount     int `json:"companyCount"`
+	CampaignCount    int `json:"campaignCount"`
+	PositionCount    int `json:"positionCount"`
+	ApplicationCount int `json:"applicationCount"`
 }
 
 // PositionAttachment is a user-provided file associated with one position.
@@ -399,6 +492,7 @@ type Dashboard struct {
 	ActiveApplications      int                  `json:"activeApplications"`
 	OfferApplications       int                  `json:"offerApplications"`
 	RejectedApplications    int                  `json:"rejectedApplications"`
+	ResumeScreeningStats    StageProgressStats   `json:"resumeScreeningStats"`
 	WrittenTestStats        StageProgressStats   `json:"writtenTestStats"`
 	AssessmentStats         StageProgressStats   `json:"assessmentStats"`
 	InterviewedApplications int                  `json:"interviewedApplications"`
@@ -447,12 +541,14 @@ type ApplicationPage struct {
 }
 
 type ApplicationDetail struct {
-	Application Application        `json:"application"`
-	Position    Position           `json:"position"`
-	Company     Company            `json:"company"`
-	Campaign    Campaign           `json:"campaign"`
-	Resume      *Resume            `json:"resume"`
-	Stages      []ApplicationStage `json:"stages"`
+	Application Application              `json:"application"`
+	Position    Position                 `json:"position"`
+	Company     Company                  `json:"company"`
+	Campaign    Campaign                 `json:"campaign"`
+	Resume      *Resume                  `json:"resume"`
+	Stages      []ApplicationStage       `json:"stages"`
+	Links       []ResourceLink           `json:"links"`
+	Attachments []SupplementalAttachment `json:"attachments"`
 }
 
 type SafetyStatus struct {

@@ -1,6 +1,7 @@
 package store
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -716,7 +717,7 @@ func TestStageTypeCatalogSupportsCustomTypesSafely(t *testing.T) {
 	for _, item := range defaults {
 		defaultNames[item.ID] = item.Name
 	}
-	if defaultNames[domain.StageWrittenTest] != "笔试" || defaultNames[domain.StageAssessment] != "测评" || defaultNames[domain.StageAIInterview] != "AI 面" || defaultNames[domain.StageFirstInterview] != "一面" || defaultNames[domain.StageSecondInterview] != "二面" || defaultNames[domain.StageThirdInterview] != "三面" || defaultNames[domain.StageFourthInterview] != "四面" || defaultNames[domain.StageHRInterview] != "HR 面" || defaultNames[domain.StageOffer] != "Offer" || defaultNames[domain.StageOther] != "其他" {
+	if defaultNames[domain.StageResumeScreening] != "简历筛选" || defaultNames[domain.StageWrittenTest] != "笔试" || defaultNames[domain.StageAssessment] != "测评" || defaultNames[domain.StageAIInterview] != "AI 面" || defaultNames[domain.StageFirstInterview] != "一面" || defaultNames[domain.StageSecondInterview] != "二面" || defaultNames[domain.StageThirdInterview] != "三面" || defaultNames[domain.StageFourthInterview] != "四面" || defaultNames[domain.StageHRInterview] != "HR 面" || defaultNames[domain.StageOffer] != "Offer" || defaultNames[domain.StageOther] != "其他" {
 		t.Fatalf("unexpected default stage type catalog: %#v", defaultNames)
 	}
 	for _, item := range defaults {
@@ -820,6 +821,7 @@ func TestDashboardStatisticsAndStageFiltersUseDistinctApplications(t *testing.T)
 	third := newApplication("基础架构")
 	fourth := newApplication("研发工程师")
 	for _, input := range []domain.ApplicationStageInput{
+		{ApplicationID: first.ID, Type: domain.StageResumeScreening, Status: domain.StagePassed},
 		{ApplicationID: first.ID, Type: domain.StageWrittenTest, Status: domain.StagePassed},
 		{ApplicationID: first.ID, Type: domain.StageFirstInterview, Status: domain.StagePassed},
 		{ApplicationID: first.ID, Type: domain.StageSecondInterview, Status: domain.StageScheduled},
@@ -838,8 +840,8 @@ func TestDashboardStatisticsAndStageFiltersUseDistinctApplications(t *testing.T)
 	if dashboard.TotalApplications != 4 || dashboard.ActiveApplications != 1 || dashboard.OfferApplications != 1 || dashboard.RejectedApplications != 2 {
 		t.Fatalf("unexpected application totals: %#v", dashboard)
 	}
-	if dashboard.WrittenTestStats.Entered != 1 || dashboard.WrittenTestStats.Passed != 1 || dashboard.AssessmentStats.Entered != 1 || dashboard.AssessmentStats.Failed != 1 {
-		t.Fatalf("unexpected written/assessment stats: %#v %#v", dashboard.WrittenTestStats, dashboard.AssessmentStats)
+	if dashboard.ResumeScreeningStats.Entered != 1 || dashboard.ResumeScreeningStats.Passed != 1 || dashboard.WrittenTestStats.Entered != 1 || dashboard.WrittenTestStats.Passed != 1 || dashboard.AssessmentStats.Entered != 1 || dashboard.AssessmentStats.Failed != 1 {
+		t.Fatalf("unexpected resume/written/assessment stats: %#v %#v %#v", dashboard.ResumeScreeningStats, dashboard.WrittenTestStats, dashboard.AssessmentStats)
 	}
 	if dashboard.InterviewedApplications != 2 {
 		t.Fatalf("interviewed applications must be deduplicated, got %#v", dashboard)
@@ -855,6 +857,13 @@ func TestDashboardStatisticsAndStageFiltersUseDistinctApplications(t *testing.T)
 	entered, err := store.ListApplications(domain.ApplicationFilter{StageType: string(domain.StageFirstInterview), Page: 1, PageSize: 20})
 	if err != nil || entered.Total != 2 {
 		t.Fatalf("stage type filter should locate each entered application: %#v, %v", entered, err)
+	}
+	resumePassed, err := store.ListApplications(domain.ApplicationFilter{StageType: string(domain.StageResumeScreening), StageStatus: string(domain.StagePassed), Page: 1, PageSize: 20})
+	if err != nil || resumePassed.Total != 1 || resumePassed.Items[0].ID != first.ID {
+		t.Fatalf("resume screening filter should locate the selected application: %#v, %v", resumePassed, err)
+	}
+	if _, err := store.SaveApplicationStage(domain.ApplicationStageInput{ApplicationID: first.ID, Type: domain.StageResumeScreening, Status: domain.StageScheduled, ScheduledStart: "2026-08-25T19:00"}); err == nil {
+		t.Fatal("resume screening must not accept calendar times")
 	}
 }
 
@@ -1231,6 +1240,100 @@ func TestProtectedEntityDeletion(t *testing.T) {
 			t.Fatalf("latest safety mirror still contains deleted company %q", fixture.company.Name)
 		}
 	})
+}
+
+func TestRelatedMaterialsPersistBackupAndFollowTheirOwners(t *testing.T) {
+	store, err := Open(filepath.Join(t.TempDir(), "related-materials.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	company, err := store.SaveCompany(domain.CompanyInput{Name: "资料测试公司"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	campaign, err := store.SaveCampaign(domain.CampaignInput{CompanyID: company.ID, Name: "2027 秋招"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	position, err := store.SavePosition(domain.PositionInput{CampaignID: campaign.ID, Title: "资料测试岗位", Priority: 3})
+	if err != nil {
+		t.Fatal(err)
+	}
+	application, err := store.SaveApplication(domain.ApplicationInput{PositionID: position.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	stage, err := store.SaveApplicationStage(domain.ApplicationStageInput{ApplicationID: application.ID, Content: "技术面", Type: domain.StageFirstInterview, Status: domain.StageScheduled})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for _, owner := range []struct {
+		typeID domain.ResourceOwnerType
+		id     string
+	}{
+		{domain.ResourceOwnerCompany, company.ID}, {domain.ResourceOwnerCampaign, campaign.ID}, {domain.ResourceOwnerPosition, position.ID}, {domain.ResourceOwnerApplication, application.ID}, {domain.ResourceOwnerStage, stage.ID},
+	} {
+		links, saveErr := store.SaveResourceLinks(owner.typeID, owner.id, []domain.ResourceLinkInput{{Name: "官方入口", URL: "https://jobs.example.com/process"}})
+		if saveErr != nil || len(links) != 1 || links[0].OwnerType != owner.typeID {
+			t.Fatalf("save links for %s: %#v, %v", owner.typeID, links, saveErr)
+		}
+	}
+	if _, err := store.SaveResourceLinks(domain.ResourceOwnerCompany, company.ID, []domain.ResourceLinkInput{{Name: "bad", URL: "file:///local"}}); err == nil {
+		t.Fatal("non-http related link must be rejected")
+	}
+
+	for _, owner := range []struct {
+		typeID domain.ResourceOwnerType
+		id     string
+	}{
+		{domain.ResourceOwnerCompany, company.ID}, {domain.ResourceOwnerCampaign, campaign.ID}, {domain.ResourceOwnerApplication, application.ID}, {domain.ResourceOwnerStage, stage.ID},
+	} {
+		items, importErr := store.ImportSupplementalAttachmentData(owner.typeID, owner.id, "reference.txt", "text/plain", []byte("related-material"))
+		if importErr != nil || len(items) != 1 {
+			t.Fatalf("save supplemental attachment for %s: %#v, %v", owner.typeID, items, importErr)
+		}
+	}
+	if _, err := store.ImportSupplementalAttachmentData(domain.ResourceOwnerPosition, position.ID, "not-allowed.txt", "text/plain", []byte("x")); err == nil {
+		t.Fatal("position must keep its existing attachment collection")
+	}
+
+	companyDetail, err := store.GetCompanyDetail(company.ID)
+	if err != nil || companyDetail.CampaignCount != 1 || len(companyDetail.Campaigns) != 1 || len(companyDetail.Links) != 1 || len(companyDetail.Attachments) != 1 {
+		t.Fatalf("unexpected company detail: %#v, %v", companyDetail, err)
+	}
+	applicationDetail, err := store.GetApplicationDetail(application.ID)
+	if err != nil || len(applicationDetail.Links) != 1 || len(applicationDetail.Attachments) != 1 || len(applicationDetail.Stages) != 1 || len(applicationDetail.Stages[0].Links) != 1 || len(applicationDetail.Stages[0].Attachments) != 1 {
+		t.Fatalf("unexpected application detail: %#v, %v", applicationDetail, err)
+	}
+	stats, err := store.DirectoryStats()
+	if err != nil || stats.CompanyCount != 1 || stats.CampaignCount != 1 || stats.PositionCount != 1 || stats.ApplicationCount != 1 {
+		t.Fatalf("unexpected directory stats: %#v, %v", stats, err)
+	}
+	backup, err := store.CreateBackup()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(filepath.Dir(backup), "attachments", "resources", "company", company.ID, companyDetail.Attachments[0].StoredName)); err != nil {
+		t.Fatalf("company supplemental attachment was not copied to backup: %v", err)
+	}
+
+	applicationAttachment := applicationDetail.Attachments[0]
+	applicationPath, err := store.SupplementalAttachmentPath(applicationAttachment.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.DeleteEntity(domain.DeleteInput{EntityType: domain.DeletionTargetApplication, ID: application.ID, ConfirmationText: position.Title}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(applicationPath); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("application supplemental attachment should be removed with its owner: %v", err)
+	}
+	var remaining int
+	if err := store.db.QueryRow(`SELECT COUNT(*) FROM resource_links WHERE owner_type IN ('application', 'stage')`).Scan(&remaining); err != nil || remaining != 0 {
+		t.Fatalf("application and stage links should be removed with the application: %d, %v", remaining, err)
+	}
 }
 
 type deletionFixture struct {

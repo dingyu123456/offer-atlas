@@ -40,6 +40,7 @@ import {
   FileText,
   FolderOpen,
   ImagePlus,
+	Link as LinkIcon,
   LayoutDashboard,
   ListFilter,
   ListTodo,
@@ -83,6 +84,9 @@ import {
 	SyncConflict,
   Position,
   PositionAttachment,
+	CompanyDetail,
+	CampaignDetail,
+	DirectoryStats,
   PositionDetail,
   PositionInput,
   PositionPage,
@@ -90,7 +94,11 @@ import {
   PositionSummary,
   QuickCapturePositionInput,
 	Resume,
-	ResumeInput,
+  ResumeInput,
+	ResourceLink,
+	ResourceLinkInput,
+	ResourceOwnerType,
+	SupplementalAttachment,
   ScheduleItem,
   SortField,
   SortOrder,
@@ -141,6 +149,7 @@ const applicationLabels: Record<ApplicationStatus, string> = {
   rejected: "未通过",
 };
 const defaultStageTypeLabels: Record<string, string> = {
+  resume_screening: "简历筛选",
   written_test: "笔试",
   assessment: "测评",
   ai_interview: "AI 面",
@@ -157,6 +166,10 @@ const stageStatusLabels: Record<StageStatus, string> = {
   passed: "通过",
   failed: "未通过",
 };
+function stageStatusLabel(status: StageStatus, type?: StageType) {
+  if (type === "resume_screening" && status === "scheduled") return "待结果";
+  return stageStatusLabels[status];
+}
 const deletionLabels: Record<DeletionTargetType, string> = {
   company: "公司",
   campaign: "招聘批次",
@@ -169,6 +182,7 @@ const emptyDashboard: Dashboard = {
   activeApplications: 0,
   offerApplications: 0,
   rejectedApplications: 0,
+  resumeScreeningStats: { type: "resume_screening", entered: 0, passed: 0, failed: 0 },
   writtenTestStats: { type: "written_test", entered: 0, passed: 0, failed: 0 },
   assessmentStats: { type: "assessment", entered: 0, passed: 0, failed: 0 },
   interviewedApplications: 0,
@@ -255,6 +269,7 @@ function dateTimeRange(start: string, end?: string) {
     : textDateTime(start);
 }
 function stageTimeText(stage: ApplicationStage) {
+  if (stage.type === "resume_screening") return "无需安排时间";
   if (stage.scheduledStart)
     return dateTimeRange(stage.scheduledStart, stage.scheduledEnd);
   if (stage.resultAt) return `结果 ${textDateTime(stage.resultAt)}`;
@@ -272,7 +287,7 @@ function backupSize(size: number) {
   if (size < 1024 * 1024) return `${Math.max(1, Math.ceil(size / 1024))} KB`;
   return `${(size / (1024 * 1024)).toFixed(1)} MB`;
 }
-function attachmentIsImage(item: PositionAttachment) {
+function attachmentIsImage(item: { mimeType: string }) {
   return [
     "image/png",
     "image/jpeg",
@@ -314,6 +329,7 @@ export default function App() {
   const cloudSyncSnapshot = useRef<Pick<CloudSyncStatus, "activity" | "state" | "lastSuccessAt"> | null>(null);
   const [companies, setCompanies] = useState<Company[]>([]);
   const [campaigns, setCampaigns] = useState<Campaign[]>([]);
+	const [directoryStats, setDirectoryStats] = useState<DirectoryStats>({ companyCount: 0, campaignCount: 0, positionCount: 0, applicationCount: 0 });
   const [positions, setPositions] = useState<PositionPage>({
     items: [],
     page: 1,
@@ -348,6 +364,8 @@ export default function App() {
     useState<PositionDetail | null>(null);
   const [selectedApplication, setSelectedApplication] =
     useState<ApplicationDetail | null>(null);
+	const [selectedCompany, setSelectedCompany] = useState<CompanyDetail | null>(null);
+	const [selectedCampaign, setSelectedCampaign] = useState<CampaignDetail | null>(null);
   const [editingCompany, setEditingCompany] = useState<Company | null>(null);
   const [editingCampaign, setEditingCampaign] = useState<Campaign | null>(null);
   const [editingPosition, setEditingPosition] = useState<Position | null>(null);
@@ -408,6 +426,7 @@ export default function App() {
       nextCloudSync,
       nextCompanies,
       nextCampaigns,
+		nextDirectoryStats,
       nextStageTypes,
 			nextResumes,
     ] = await Promise.all([
@@ -416,6 +435,7 @@ export default function App() {
       api.cloudSyncStatus(),
       api.companies(),
       api.campaigns(),
+		api.directoryStats(),
       api.stageTypes(),
 			api.resumes(true),
     ]);
@@ -431,6 +451,7 @@ export default function App() {
 		};
     setCompanies(nextCompanies);
     setCampaigns(nextCampaigns);
+		setDirectoryStats(nextDirectoryStats);
     setStageTypes(nextStageTypes);
 		setResumes(nextResumes);
   };
@@ -517,6 +538,16 @@ export default function App() {
         .then(setSelectedApplication)
         .catch((reason) => setError(messageOf(reason)));
     }
+		if (selectedCompany) {
+			void api.companyDetail(selectedCompany.company.id)
+				.then(setSelectedCompany)
+				.catch((reason) => setError(messageOf(reason)));
+		}
+		if (selectedCampaign) {
+			void api.campaignDetail(selectedCampaign.campaign.id)
+				.then(setSelectedCampaign)
+				.catch((reason) => setError(messageOf(reason)));
+		}
   }, [cloudSyncRevision]);
 
   useEffect(() => {
@@ -573,6 +604,10 @@ export default function App() {
 		setEditingResume(null);
     setEditingStage(null);
     await load();
+		if (selectedCompany) setSelectedCompany(await api.companyDetail(selectedCompany.company.id));
+		if (selectedCampaign) setSelectedCampaign(await api.campaignDetail(selectedCampaign.campaign.id));
+		if (selectedPosition) setSelectedPosition(await api.positionDetail(selectedPosition.position.id));
+		if (selectedApplication) setSelectedApplication(await api.applicationDetail(selectedApplication.application.id));
     notify(message);
   };
   const openNew = (name: DialogName) => {
@@ -586,6 +621,8 @@ export default function App() {
   };
   const openPosition = async (id: string) => {
     try {
+		setSelectedCompany(null);
+		setSelectedCampaign(null);
       setSelectedApplication(null);
       setSelectedPosition(await api.positionDetail(id));
     } catch (reason) {
@@ -594,12 +631,34 @@ export default function App() {
   };
   const openApplication = async (id: string) => {
     try {
+		setSelectedCompany(null);
+		setSelectedCampaign(null);
       setSelectedPosition(null);
       setSelectedApplication(await api.applicationDetail(id));
     } catch (reason) {
       setError(messageOf(reason));
     }
   };
+	const openCompany = async (id: string) => {
+		try {
+			setSelectedPosition(null);
+			setSelectedApplication(null);
+			setSelectedCampaign(null);
+			setSelectedCompany(await api.companyDetail(id));
+		} catch (reason) {
+			setError(messageOf(reason));
+		}
+	};
+	const openCampaign = async (id: string) => {
+		try {
+			setSelectedPosition(null);
+			setSelectedApplication(null);
+			setSelectedCompany(null);
+			setSelectedCampaign(await api.campaignDetail(id));
+		} catch (reason) {
+			setError(messageOf(reason));
+		}
+	};
   const openDeletion = (target: DeletionTarget) => {
     setDeletionTarget(target);
     setDialog("delete");
@@ -646,6 +705,10 @@ export default function App() {
     ? selectedPosition.position.title
     : selectedApplication
       ? `${selectedApplication.position.title} · 投递详情`
+			: selectedCompany
+				? `${selectedCompany.company.name} · 公司详情`
+				: selectedCampaign
+					? `${selectedCampaign.campaign.name} · 批次详情`
       : view === "dashboard"
         ? "总览"
         : view === "positions"
@@ -666,10 +729,12 @@ export default function App() {
       ? "返回日历"
       : view === "todos"
         ? "返回待办"
-        : view === "search"
+      : view === "search"
           ? "返回搜索结果"
-          : view === "positions"
-            ? "返回岗位管理"
+        : view === "positions"
+          ? "返回岗位管理"
+				: view === "directory"
+					? "返回公司与批次"
             : view === "dashboard"
               ? "返回总览"
               : "返回投递记录";
@@ -861,11 +926,37 @@ export default function App() {
             </div>
           )}
           {loading && <div className="loading-line" />}
-          {selectedPosition ? (
+          {selectedCompany ? (
+            <CompanyDetailView
+              detail={selectedCompany}
+              backLabel={sourceBackLabel}
+              onBack={() => setSelectedCompany(null)}
+              onEdit={() => { setEditingCompany(selectedCompany.company); setDialog("company"); }}
+              onDelete={() => openDeletion({ entityType: "company", id: selectedCompany.company.id, name: selectedCompany.company.name })}
+              onOpenCampaign={(id) => void openCampaign(id)}
+              onNotify={notify}
+              onRefresh={() => void openCompany(selectedCompany.company.id)}
+              onError={(message) => setError(message)}
+            />
+          ) : selectedCampaign ? (
+            <CampaignDetailView
+              detail={selectedCampaign}
+              backLabel={sourceBackLabel}
+              onBack={() => setSelectedCampaign(null)}
+              onEdit={() => { setEditingCampaign(selectedCampaign.campaign); setDialog("campaign"); }}
+              onDelete={() => openDeletion({ entityType: "campaign", id: selectedCampaign.campaign.id, name: selectedCampaign.campaign.name })}
+              onOpenCompany={(id) => void openCompany(id)}
+              onNotify={notify}
+              onRefresh={() => void openCampaign(selectedCampaign.campaign.id)}
+              onError={(message) => setError(message)}
+            />
+          ) : selectedPosition ? (
             <PositionDetailView
               detail={selectedPosition}
               backLabel={sourceBackLabel}
               onNotify={notify}
+				onRefresh={() => void openPosition(selectedPosition.position.id)}
+				onError={(message) => setError(message)}
               onBack={() => setSelectedPosition(null)}
               onEditPosition={() => {
                 setEditingPosition(selectedPosition.position);
@@ -921,6 +1012,9 @@ export default function App() {
             <ApplicationDetailView
               detail={selectedApplication}
               backLabel={sourceBackLabel}
+				onNotify={notify}
+				onRefresh={() => void openApplication(selectedApplication.application.id)}
+				onError={(message) => setError(message)}
 			  onOpenResume={async (resumeID) => {
                 try {
 				  await api.openResume(resumeID);
@@ -1139,8 +1233,11 @@ export default function App() {
             <DirectoryView
               companies={companies}
               campaigns={campaigns}
+				stats={directoryStats}
               onNewCompany={() => openNew("company")}
               onNewCampaign={() => openNew("campaign")}
+				onOpenCompany={(item) => void openCompany(item.id)}
+				onOpenCampaign={(item) => void openCampaign(item.id)}
               onEditCompany={(item) => {
                 setEditingCompany(item);
                 setDialog("company");
@@ -1451,7 +1548,7 @@ function StageStatusHelp() {
   return (
     <HelpTip label="了解节点状态的含义">
       <strong>节点状态</strong>
-      <span>“已预约”表示尚未完成；“通过”和“未通过”表示该节点的结果。</span>
+      <span>“已预约”表示尚未完成；在“简历筛选”中显示为“待结果”。“通过”和“未通过”表示该节点的结果。</span>
     </HelpTip>
   );
 }
@@ -1540,7 +1637,9 @@ function SortableTableHeader({
 function StageGlyph({ type }: { type: StageType }) {
   return (
     <span className={`stage-glyph ${type}`}>
-      {type === "written_test" ? (
+      {type === "resume_screening" ? (
+        <Search size={15} />
+      ) : type === "written_test" ? (
         <FileText size={15} />
       ) : type === "assessment" ? (
         <ClipboardCheck size={15} />
@@ -1572,7 +1671,7 @@ function StageStrip({ stages }: { stages: ApplicationStage[] }) {
           <div className="stage-chip-wrap" key={stage.id}>
             <span
               className={`stage-chip ${stage.status}`}
-              title={`${typeLabel(stage.type)}${stage.content ? ` · ${stage.content}` : ""} · ${stageStatusLabels[stage.status]} · ${stageTimeText(stage)}`}
+              title={`${typeLabel(stage.type)}${stage.content ? ` · ${stage.content}` : ""} · ${stageStatusLabel(stage.status, stage.type)} · ${stageTimeText(stage)}`}
             >
               <StageGlyph type={stage.type} />
               <span>
@@ -1581,7 +1680,7 @@ function StageStrip({ stages }: { stages: ApplicationStage[] }) {
                   {stage.content ? ` · ${stage.content}` : ""}
                 </strong>
                 <small>
-                  {stageStatusLabels[stage.status]} · {stageTimeText(stage)}
+                  {stageStatusLabel(stage.status, stage.type)} · {stageTimeText(stage)}
                 </small>
               </span>
             </span>
@@ -1807,11 +1906,12 @@ function DashboardView({
           <section className="panel dashboard-metrics-panel dashboard-screening-panel">
             <div className="analytics-panel-heading">
               <div>
-                <h2>笔试与测评</h2>
+                <h2>简历、笔试与测评</h2>
                 <span>按投递记录去重</span>
               </div>
             </div>
             <div className="stage-stat-grid">
+              <StageStats stats={dashboard.resumeScreeningStats} />
               <StageStats stats={dashboard.writtenTestStats} />
               <StageStats stats={dashboard.assessmentStats} />
             </div>
@@ -2028,7 +2128,9 @@ function ApplicationFilterPopover({
             onChange={(event) => setNextStageStatus(event.target.value)}
           >
             <option value="">不限节点状态</option>
-            <option value="scheduled">已预约</option>
+            <option value="scheduled">
+              {stageStatusLabel("scheduled", nextType)}
+            </option>
             <option value="passed">通过</option>
             <option value="failed">未通过</option>
           </select>
@@ -2255,9 +2357,10 @@ function PositionsView({
                       </strong>
                       <small>
                         {item.currentStageType
-                          ? stageStatusLabels[
-                              item.currentStageStatus as StageStatus
-                            ]
+                          ? stageStatusLabel(
+                              item.currentStageStatus as StageStatus,
+                              item.currentStageType,
+                            )
                           : item.applicationId
                             ? "可随时新增节点"
                             : "创建投递后启用"}
@@ -2412,7 +2515,7 @@ function ApplicationsView({
             )}
             {stageStatus && (
               <ActiveFilterChip
-                label={stageStatusLabels[stageStatus as StageStatus]}
+                label={stageStatusLabel(stageStatus as StageStatus, stageType)}
                 tone={stageStatus}
                 title="移除节点结果条件"
                 onRemove={() => onApplyFilter(filter, stageType, "", resumeID)}
@@ -2705,7 +2808,10 @@ function SearchView({
                       : "尚未添加流程"}
                     {item.currentStageStatus && (
                       <small>
-                        {stageStatusLabels[item.currentStageStatus]}
+                        {stageStatusLabel(
+                          item.currentStageStatus,
+                          item.currentStageType,
+                        )}
                       </small>
                     )}
                   </span>
@@ -3417,8 +3523,11 @@ function TodosView({
 function DirectoryView({
   companies,
   campaigns,
+	stats,
   onNewCompany,
   onNewCampaign,
+	onOpenCompany,
+	onOpenCampaign,
   onEditCompany,
   onDeleteCompany,
   onEditCampaign,
@@ -3426,8 +3535,11 @@ function DirectoryView({
 }: {
   companies: Company[];
   campaigns: Campaign[];
+	stats: DirectoryStats;
   onNewCompany: () => void;
   onNewCampaign: () => void;
+	onOpenCompany: (item: Company) => void;
+	onOpenCampaign: (item: Campaign) => void;
   onEditCompany: (item: Company) => void;
   onDeleteCompany: (item: Company) => void;
   onEditCampaign: (item: Campaign) => void;
@@ -3438,7 +3550,7 @@ function DirectoryView({
       <section className="page-heading compact">
         <div>
           <h1>公司与招聘批次</h1>
-          <p className="muted">保存官方公告与流程参考，不预设实际面试轮数。</p>
+			<p className="muted">归档公司、招聘批次与官方资料，再进入岗位和投递记录。</p>
         </div>
         <div className="heading-buttons">
           <button className="secondary-button" onClick={onNewCampaign}>
@@ -3451,6 +3563,12 @@ function DirectoryView({
           </button>
         </div>
       </section>
+		<section className="directory-stats" aria-label="公司与批次收录统计">
+			<div><strong>{stats.companyCount}</strong><span>家已收录公司</span></div>
+			<div><strong>{stats.campaignCount}</strong><span>个招聘批次</span></div>
+			<div><strong>{stats.positionCount}</strong><span>个关联岗位</span></div>
+			<div><strong>{stats.applicationCount}</strong><span>条投递记录</span></div>
+		</section>
       <section className="directory-list">
         {companies.map((company) => {
           const companyCampaigns = campaigns.filter(
@@ -3459,7 +3577,7 @@ function DirectoryView({
           return (
             <section className="panel company-block" key={company.id}>
               <div className="company-block-header">
-                <div>
+					<button type="button" className="company-open" onClick={() => onOpenCompany(company)}>
                   <span className="company-monogram">
                     {company.name.slice(0, 1)}
                   </span>
@@ -3470,7 +3588,7 @@ function DirectoryView({
                       个招聘批次
                     </small>
                   </div>
-                </div>
+					</button>
                 <div className="row-actions">
                   <button
                     className="icon-button small"
@@ -3491,12 +3609,12 @@ function DirectoryView({
               <div className="campaign-list">
                 {companyCampaigns.map((campaign) => (
                   <div className="campaign-row" key={campaign.id}>
-                    <div>
+						<button type="button" className="campaign-open" onClick={() => onOpenCampaign(campaign)}>
                       <strong>{campaign.name}</strong>
                       <span>
                         {campaign.processOverview || "尚未记录官方流程参考"}
                       </span>
-                    </div>
+						</button>
                     <div>
                       <small>
                         {campaign.closesOn
@@ -3537,10 +3655,331 @@ function DirectoryView({
   );
 }
 
+function linkDomain(value: string) {
+  try {
+    return new URL(value).hostname.replace(/^www\./, "");
+  } catch {
+    return value;
+  }
+}
+
+function ResourceLinksPanel({
+  ownerType,
+  ownerID,
+  links,
+  onChanged,
+  onError,
+	  onNotify,
+	embedded = false,
+}: {
+  ownerType: ResourceOwnerType;
+  ownerID: string;
+  links: ResourceLink[];
+  onChanged: () => void;
+  onError: (message: string) => void;
+	  onNotify?: (message: string) => void;
+	embedded?: boolean;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [drafts, setDrafts] = useState<ResourceLinkInput[]>([]);
+  const [saving, setSaving] = useState(false);
+  useEffect(() => {
+    if (!editing) setDrafts(links.map((item) => ({ id: item.id, name: item.name, url: item.url })));
+  }, [links, editing]);
+  const startEditing = () => {
+    setDrafts(links.map((item) => ({ id: item.id, name: item.name, url: item.url })));
+    setEditing(true);
+  };
+  const save = async () => {
+    setSaving(true);
+    try {
+      await api.saveResourceLinks(ownerType, ownerID, drafts);
+      setEditing(false);
+      onChanged();
+    } catch (reason) {
+      onError(messageOf(reason));
+    } finally {
+      setSaving(false);
+    }
+  };
+	const copy = async (item: ResourceLink) => {
+		try {
+			const copied = await ClipboardSetText(item.url);
+			if (!copied) throw new Error("clipboard unavailable");
+			onNotify?.("链接已复制");
+		} catch {
+			onError("无法复制链接，请检查剪贴板权限后重试。");
+		}
+	};
+  return (
+    <section className={`${embedded ? "embedded-resource-section" : "panel"} related-links-panel`}>
+      <div className="panel-header related-links-header">
+        <div>
+          <h2>相关链接</h2>
+          <span>{links.length ? `${links.length} 条已保存链接` : "官网流程、投递入口或其他参考页面"}</span>
+        </div>
+        {editing ? (
+          <div className="related-links-actions">
+            <button type="button" className="text-button" disabled={saving} onClick={() => setEditing(false)}>取消</button>
+            <button type="button" className="primary-button compact-button" disabled={saving} onClick={() => void save()}><CheckCircle2 size={14} />{saving ? "保存中" : "保存链接"}</button>
+          </div>
+        ) : (
+          <button type="button" className="secondary-button compact-button" onClick={startEditing}><LinkIcon size={14} />管理链接</button>
+        )}
+      </div>
+      {editing ? (
+        <ResourceLinkEditor drafts={drafts} onChange={setDrafts} />
+      ) : links.length ? (
+        <div className="related-link-list">
+          {links.map((item) => (
+            <div className="related-link-row" key={item.id}>
+              <button type="button" className="related-link-open" onClick={() => void BrowserOpenURL(item.url)} title={`在浏览器打开 ${item.url}`}>
+                <span className="related-link-icon"><LinkIcon size={15} /></span>
+                <span className="related-link-main"><strong>{item.name}</strong><small>{linkDomain(item.url)}</small></span>
+              </button>
+              <button type="button" className="icon-button small related-link-copy" title="复制链接" aria-label={`复制链接：${item.name}`} onClick={() => void copy(item)}><Copy size={14} /></button>
+              <ExternalLink size={14} aria-hidden="true" />
+            </div>
+          ))}
+        </div>
+      ) : (
+        <div className="related-links-empty"><LinkIcon size={17} /><span>暂未添加相关链接</span><small>可保存流程官网、投递入口、公告或资料页面。</small></div>
+      )}
+    </section>
+  );
+}
+
+function ResourceLinkEditor({
+  drafts,
+  onChange,
+}: {
+  drafts: ResourceLinkInput[];
+  onChange: (value: ResourceLinkInput[]) => void;
+}) {
+  const update = (index: number, field: "name" | "url", value: string) => onChange(drafts.map((item, itemIndex) => itemIndex === index ? { ...item, [field]: value } : item));
+  return (
+    <div className="resource-link-editor">
+      {drafts.map((item, index) => (
+        <div className="resource-link-edit-row" key={item.id || `new-${index}`}>
+          <input value={item.name} onChange={(event) => update(index, "name", event.target.value)} placeholder="链接名称，例如：官网流程" aria-label="链接名称" />
+          <input type="url" value={item.url} onChange={(event) => update(index, "url", event.target.value)} placeholder="https://" aria-label="链接地址" />
+          <button type="button" className="icon-button small danger-button" title="移除此链接" onClick={() => onChange(drafts.filter((_, itemIndex) => itemIndex !== index))}><Trash2 size={14} /></button>
+        </div>
+      ))}
+      <button type="button" className="text-button resource-link-add" onClick={() => onChange([...drafts, { name: "", url: "" }])}><CirclePlus size={15} />添加链接</button>
+    </div>
+  );
+}
+
+function RelatedLinksFormField({ links, onChange }: { links: ResourceLinkInput[]; onChange: (value: ResourceLinkInput[]) => void }) {
+  return <Field wide label="相关链接"><div className="related-links-form"><span>可添加流程官网、投递入口、公告或其他参考页面。</span><ResourceLinkEditor drafts={links} onChange={onChange} /></div></Field>;
+}
+
+function StagedSupplementalAttachmentsField({
+  files,
+  onChange,
+  disabled,
+}: {
+  files: File[];
+  onChange: (files: File[]) => void;
+  disabled?: boolean;
+}) {
+  const inputRef = useRef<HTMLInputElement>(null);
+  const [pasteActive, setPasteActive] = useState(false);
+  const add = (incoming: Iterable<File>) => {
+    const added = Array.from(incoming);
+    const tooLarge = added.find((item) => item.size > maxStagedAttachmentBytes);
+    if (tooLarge) return;
+    onChange([...files, ...added]);
+  };
+  const paste = (event: ClipboardEvent<HTMLDivElement>) => {
+    const image = Array.from(event.clipboardData.files).find((item) => attachmentIsClipboardImage(item.type));
+    if (!image) return;
+    event.preventDefault();
+    add([new File([image], clipboardImageName(image.type), { type: image.type })]);
+  };
+  return <Field wide label="补充资料">
+    <div className="staged-resource-attachments">
+      <span>保存后会自动上传；支持截图、公告、邮件或其他参考文件。</span>
+      <input ref={inputRef} className="quick-capture-file-input" type="file" multiple disabled={disabled} onChange={(event) => { add(event.target.files || []); event.target.value = ""; }} />
+      <div className="staged-resource-actions"><button type="button" className="secondary-button compact-button" disabled={disabled} onClick={() => inputRef.current?.click()}><ImagePlus size={14} />选择图片或文件</button><div className={`quick-paste-zone compact ${pasteActive ? "is-active" : ""}`} role="button" tabIndex={0} onMouseEnter={(event) => event.currentTarget.focus()} onMouseLeave={(event) => { if (document.activeElement === event.currentTarget) event.currentTarget.blur(); }} onFocus={() => setPasteActive(true)} onBlur={() => setPasteActive(false)} onPaste={paste}><ClipboardPaste size={15} /><span>移至此处后 Ctrl+V 粘贴截图</span><kbd>Ctrl+V</kbd></div></div>
+      {files.length > 0 && <div className="quick-attachment-list">{files.map((file, index) => <QuickCaptureAttachmentRow file={file} key={`${file.name}-${file.size}-${file.lastModified}-${index}`} disabled={Boolean(disabled)} onRemove={() => onChange(files.filter((_, itemIndex) => itemIndex !== index))} />)}</div>}
+    </div>
+  </Field>;
+}
+
+function ExistingRelatedMaterialsSummary({
+  links,
+  attachments,
+  onError,
+}: {
+  links: ResourceLink[];
+  attachments: SupplementalAttachment[];
+  onError: (message: string) => void;
+}) {
+  const visibleLinks = links.slice(0, 2);
+  const visibleAttachments = attachments.slice(0, 2);
+  return (
+    <div className="quick-existing-materials" aria-label="已保存的相关资料">
+      <div className="quick-existing-materials-heading">
+        <span>已保存资料</span>
+        <small>复用已有记录时保持只读</small>
+      </div>
+      {links.length > 0 && (
+        <div className="quick-existing-material-row">
+          <span><LinkIcon size={13} />相关链接</span>
+          <div>
+            {visibleLinks.map((item) => (
+              <button type="button" key={item.id} title={`打开 ${item.url}`} onClick={() => void BrowserOpenURL(item.url)}>
+                {item.name}<ExternalLink size={11} />
+              </button>
+            ))}
+            {links.length > visibleLinks.length && <small>另有 {links.length - visibleLinks.length} 条</small>}
+          </div>
+        </div>
+      )}
+      {attachments.length > 0 && (
+        <div className="quick-existing-material-row">
+          <span><FileText size={13} />补充资料</span>
+          <div>
+            {visibleAttachments.map((item) => (
+              <button type="button" key={item.id} title={`打开 ${item.originalName}`} onClick={() => void api.openSupplementalAttachment(item.id).catch((reason) => onError(messageOf(reason)))}>
+                {item.originalName}<small>{attachmentSize(item.sizeBytes)}</small><ExternalLink size={11} />
+              </button>
+            ))}
+            {attachments.length > visibleAttachments.length && <small>另有 {attachments.length - visibleAttachments.length} 个文件</small>}
+          </div>
+        </div>
+      )}
+      {!links.length && !attachments.length && <p>暂未保存相关链接或补充资料。</p>}
+    </div>
+  );
+}
+
+async function uploadStagedSupplementalAttachments(ownerType: Exclude<ResourceOwnerType, "position">, ownerID: string, files: File[], onUploaded?: (file: File) => void) {
+  for (const file of files) {
+    await api.uploadSupplementalAttachment(ownerType, ownerID, file.name, await fileDataURL(file));
+		onUploaded?.(file);
+  }
+}
+
+function SupplementalAttachmentsPanel({
+  ownerType,
+  ownerID,
+  items,
+  onChanged,
+  onError,
+  onNotify,
+	embedded = false,
+}: {
+  ownerType: Exclude<ResourceOwnerType, "position">;
+  ownerID: string;
+  items: SupplementalAttachment[];
+  onChanged: () => void;
+  onError: (message: string) => void;
+  onNotify: (message: string) => void;
+	embedded?: boolean;
+}) {
+  const [preview, setPreview] = useState<{ name: string; url: string } | null>(null);
+  const [loadingID, setLoadingID] = useState("");
+  const [pasting, setPasting] = useState(false);
+  const [pasteActive, setPasteActive] = useState(false);
+  const inputRef = useRef<HTMLInputElement>(null);
+  const images = items.filter(attachmentIsImage);
+  const files = items.filter((item) => !attachmentIsImage(item));
+  const upload = async (filesToUpload: Iterable<File>) => {
+    const files = Array.from(filesToUpload);
+    if (!files.length) return;
+    const tooLarge = files.find((item) => item.size > maxStagedAttachmentBytes);
+    if (tooLarge) { onError(`“${tooLarge.name}”超过 25 MB，暂不支持上传。`); return; }
+    try {
+      for (const file of files) await api.uploadSupplementalAttachment(ownerType, ownerID, file.name, await fileDataURL(file));
+      onChanged();
+      onNotify(files.length === 1 ? "补充资料已添加" : `已添加 ${files.length} 份补充资料`);
+    } catch (reason) { onError(messageOf(reason)); }
+  };
+  const receivePaste = (event: ClipboardEvent<HTMLDivElement>) => {
+    const image = Array.from(event.clipboardData.files).find((file) => attachmentIsClipboardImage(file.type));
+    if (!image || pasting) { if (!image) onError("剪贴板中没有图片，请复制截图后重试。"); return; }
+    event.preventDefault();
+    setPasting(true);
+    void (async () => {
+      try {
+        await api.pasteSupplementalImage(ownerType, ownerID, clipboardImageName(image.type), await fileDataURL(image));
+        onChanged();
+        onNotify("截图已添加");
+      } catch (reason) {
+        onError(messageOf(reason));
+      } finally {
+        setPasting(false);
+      }
+    })();
+  };
+  const showPreview = async (item: SupplementalAttachment) => {
+    setLoadingID(item.id);
+    try { setPreview({ name: item.originalName, url: await api.supplementalAttachmentDataURL(item.id) }); }
+    catch (reason) { onError(messageOf(reason)); }
+    finally { setLoadingID(""); }
+  };
+  const remove = (item: SupplementalAttachment) => {
+    if (!window.confirm(`删除“${item.originalName}”？`)) return;
+    void api.deleteSupplementalAttachment(item.id).then(() => { onChanged(); onNotify("补充资料已删除"); }).catch((reason) => onError(messageOf(reason)));
+  };
+  return (
+    <section className={`${embedded ? "embedded-resource-section" : "panel"} supplemental-attachments`}>
+      <div className="panel-header attachment-header"><div><h2>补充资料</h2><span>{items.length ? `${items.length} 个文件` : "截图、公告、邮件或其他参考文件"}</span></div><button type="button" className="secondary-button attachment-add-button" onClick={() => inputRef.current?.click()}><ImagePlus size={16} />添加资料</button></div>
+      <input ref={inputRef} className="quick-capture-file-input" type="file" multiple onChange={(event) => { void upload(event.target.files || []); event.target.value = ""; }} />
+      <div className={`attachment-paste-zone ${pasteActive ? "is-active" : ""}`} role="button" tabIndex={0} onMouseEnter={(event) => event.currentTarget.focus()} onMouseLeave={(event) => { if (document.activeElement === event.currentTarget) event.currentTarget.blur(); }} onFocus={() => setPasteActive(true)} onBlur={() => setPasteActive(false)} onPaste={receivePaste}>
+        <ClipboardPaste size={17} /><div><strong>{pasting ? "正在保存截图" : "粘贴截图"}</strong><span>将鼠标移至此区域后按 Ctrl+V；页面其他位置不会接收粘贴</span></div><kbd>Ctrl+V</kbd>
+      </div>
+      {!items.length ? <div className="attachment-empty"><ImagePlus size={20} /><span>暂未添加补充资料</span><small>图片会在这里展示缩略图，其他文件可直接打开。</small></div> : <div className="attachment-body">
+        {images.length > 0 && <div className="attachment-gallery">{images.map((item) => <article className="attachment-image-card" key={item.id}><button type="button" className="attachment-image-preview" onClick={() => void showPreview(item)} disabled={loadingID === item.id}><ResourceAttachmentThumbnail item={item} /><span>{loadingID === item.id ? "加载预览" : "查看图片"}</span></button><div><strong title={item.originalName}>{item.originalName}</strong><small>{attachmentSize(item.sizeBytes)} · {textDate(item.createdAt)}</small></div><div className="attachment-actions"><button className="icon-button small" title="用默认程序打开" onClick={() => void api.openSupplementalAttachment(item.id).catch((reason) => onError(messageOf(reason)))}><ExternalLink size={14} /></button><button className="icon-button small danger-button" title="删除资料" onClick={() => remove(item)}><Trash2 size={14} /></button></div></article>)}</div>}
+        {files.length > 0 && <div className="attachment-file-list">{files.map((item) => <article className="attachment-file" key={item.id}><span className="attachment-file-icon"><FileText size={18} /></span><div><strong title={item.originalName}>{item.originalName}</strong><small>{item.mimeType || "未知类型"} · {attachmentSize(item.sizeBytes)} · {textDate(item.createdAt)}</small></div><div className="attachment-actions"><button className="icon-button small" title="用默认程序打开" onClick={() => void api.openSupplementalAttachment(item.id).catch((reason) => onError(messageOf(reason)))}><ExternalLink size={14} /></button><button className="icon-button small danger-button" title="删除资料" onClick={() => remove(item)}><Trash2 size={14} /></button></div></article>)}</div>}
+      </div>}
+      {preview && <div className="attachment-lightbox" role="dialog" aria-modal="true" aria-label={preview.name}><div className="attachment-lightbox-content"><div><strong>{preview.name}</strong><button className="icon-button small" title="关闭图片预览" onClick={() => setPreview(null)}><X size={14} /></button></div><img src={preview.url} alt={preview.name} /></div></div>}
+    </section>
+  );
+}
+
+function ResourceAttachmentThumbnail({ item }: { item: SupplementalAttachment }) {
+  const [thumbnail, setThumbnail] = useState("");
+  useEffect(() => { let active = true; void api.supplementalAttachmentDataURL(item.id).then((url) => { if (active) setThumbnail(url); }).catch(() => { if (active) setThumbnail(""); }); return () => { active = false; }; }, [item.id]);
+  return thumbnail ? <img src={thumbnail} alt="" /> : <span className="attachment-image-placeholder"><ImagePlus size={18} /></span>;
+}
+
+function CompanyDetailView({ detail, backLabel, onBack, onEdit, onDelete, onOpenCampaign, onNotify, onRefresh, onError }: {
+  detail: CompanyDetail; backLabel: string; onBack: () => void; onEdit: () => void; onDelete: () => void; onOpenCampaign: (id: string) => void; onNotify: (message: string) => void; onRefresh: () => void; onError: (message: string) => void;
+}) {
+  return <div className="page-content resource-detail-page">
+    <button className="back-button" onClick={onBack}><ArrowLeft size={16} />{backLabel}</button>
+    <section className="detail-heading"><div><p className="eyebrow">公司详情</p><h1>{detail.company.name}</h1><p className="muted">{detail.company.industry || "行业待补充"}</p></div><div className="heading-buttons"><button className="secondary-button" onClick={onEdit}><Pencil size={16} />编辑公司</button><button className="icon-button danger-button" title="删除公司" onClick={onDelete}><Trash2 size={16} /></button></div></section>
+    <section className="directory-detail-metrics"><div><strong>{detail.campaignCount}</strong><span>个招聘批次</span></div><div><strong>{detail.positionCount}</strong><span>个关联岗位</span></div><div><strong>{detail.applicationCount}</strong><span>条投递记录</span></div></section>
+    <section className="panel detail-notes"><Info label="招聘官网" value={detail.company.homepage || "未设置"} link={detail.company.homepage} onNotify={onNotify} /><span>公司备注</span><p>{detail.company.notes || "暂无公司备注"}</p></section>
+    <ResourceLinksPanel ownerType="company" ownerID={detail.company.id} links={detail.links} onChanged={onRefresh} onError={onError} onNotify={onNotify} />
+    <SupplementalAttachmentsPanel ownerType="company" ownerID={detail.company.id} items={detail.attachments} onChanged={onRefresh} onError={onError} onNotify={onNotify} />
+    <section className="panel company-campaign-summary"><div className="panel-header"><div><h2>招聘批次</h2><span>已关联 {detail.campaignCount} 个招聘批次</span></div></div>{detail.campaigns.length ? <div className="company-detail-campaign-list">{detail.campaigns.map((campaign) => <button type="button" key={campaign.id} onClick={() => onOpenCampaign(campaign.id)}><span><strong>{campaign.name}</strong><small>{campaign.processOverview || "尚未记录官方流程参考"}</small></span><ArrowRight size={15} /></button>)}</div> : <Empty text="尚未建立招聘批次" />}</section>
+  </div>;
+}
+
+function CampaignDetailView({ detail, backLabel, onBack, onEdit, onDelete, onOpenCompany, onNotify, onRefresh, onError }: {
+  detail: CampaignDetail; backLabel: string; onBack: () => void; onEdit: () => void; onDelete: () => void; onOpenCompany: (id: string) => void; onNotify: (message: string) => void; onRefresh: () => void; onError: (message: string) => void;
+}) {
+  return <div className="page-content resource-detail-page">
+    <button className="back-button" onClick={onBack}><ArrowLeft size={16} />{backLabel}</button>
+    <section className="detail-heading"><div><p className="eyebrow">{detail.company.name} · 招聘批次</p><h1>{detail.campaign.name}</h1><p className="muted">{[detail.campaign.opensOn ? `开放 ${textDate(detail.campaign.opensOn)}` : "", detail.campaign.closesOn ? `截止 ${textDate(detail.campaign.closesOn)}` : ""].filter(Boolean).join(" · ") || "日期待补充"}</p></div><div className="heading-buttons"><button className="secondary-button" onClick={onEdit}><Pencil size={16} />编辑批次</button><button className="icon-button danger-button" title="删除招聘批次" onClick={onDelete}><Trash2 size={16} /></button></div></section>
+    <section className="directory-detail-metrics"><div><strong>{detail.positionCount}</strong><span>个关联岗位</span></div><div><strong>{detail.applicationCount}</strong><span>条投递记录</span></div><button type="button" className="detail-company-jump" onClick={() => onOpenCompany(detail.company.id)}><Building2 size={15} /><span>{detail.company.name}</span><ArrowRight size={14} /></button></section>
+    <section className="panel detail-notes"><Info label="批次官网链接" value={detail.campaign.sourceUrl || "未设置"} link={detail.campaign.sourceUrl} onNotify={onNotify} /><span>官方流程参考</span><p>{detail.campaign.processOverview || "尚未记录官方流程参考。"}</p><span>批次备注</span><p>{detail.campaign.notes || "暂无批次备注"}</p></section>
+    <ResourceLinksPanel ownerType="campaign" ownerID={detail.campaign.id} links={detail.links} onChanged={onRefresh} onError={onError} onNotify={onNotify} />
+    <SupplementalAttachmentsPanel ownerType="campaign" ownerID={detail.campaign.id} items={detail.attachments} onChanged={onRefresh} onError={onError} onNotify={onNotify} />
+  </div>;
+}
+
 function PositionDetailView({
   detail,
   backLabel,
   onNotify,
+	onRefresh,
+	onError,
   onBack,
   onEditPosition,
   onDeletePosition,
@@ -3553,6 +3992,8 @@ function PositionDetailView({
   detail: PositionDetail;
   backLabel: string;
   onNotify: (message: string) => void;
+	onRefresh: () => void;
+	onError: (message: string) => void;
   onBack: () => void;
   onEditPosition: () => void;
   onDeletePosition: () => void;
@@ -3705,6 +4146,7 @@ function PositionDetailView({
           )}
         </section>
       </div>
+		<ResourceLinksPanel ownerType="position" ownerID={detail.position.id} links={detail.links} onChanged={onRefresh} onError={onError} onNotify={onNotify} />
       <PositionAttachmentsPanel
         positionID={detail.position.id}
         items={detail.attachments || []}
@@ -4084,6 +4526,9 @@ function QuickCaptureAttachmentRow({
 function ApplicationDetailView({
   detail,
   backLabel,
+	onNotify,
+	onRefresh,
+	onError,
   onOpenResume,
 	onClearResume,
   onBack,
@@ -4097,6 +4542,9 @@ function ApplicationDetailView({
 }: {
   detail: ApplicationDetail;
   backLabel: string;
+	onNotify: (message: string) => void;
+	onRefresh: () => void;
+	onError: (message: string) => void;
   onOpenResume: (resumeID: string) => Promise<void>;
 	onClearResume: () => void;
   onBack: () => void;
@@ -4204,8 +4652,13 @@ function ApplicationDetailView({
         <span>投递备注</span>
         <p>{detail.application.notes || "暂无投递备注"}</p>
       </section>
+		<ResourceLinksPanel ownerType="application" ownerID={detail.application.id} links={detail.links} onChanged={onRefresh} onError={onError} onNotify={onNotify} />
+		<SupplementalAttachmentsPanel ownerType="application" ownerID={detail.application.id} items={detail.attachments} onChanged={onRefresh} onError={onError} onNotify={onNotify} />
       <Timeline
         stages={detail.stages}
+			onNotify={onNotify}
+			onRefresh={onRefresh}
+			onError={onError}
         onCreateStage={onCreateStage}
         onEditStage={onEditStage}
         onDeleteStage={onDeleteStage}
@@ -4217,12 +4670,18 @@ function ApplicationDetailView({
 
 function Timeline({
   stages,
+	onNotify,
+	onRefresh,
+	onError,
   onCreateStage,
   onEditStage,
   onDeleteStage,
   onMoveStage,
 }: {
   stages: ApplicationStage[];
+	onNotify: (message: string) => void;
+	onRefresh: () => void;
+	onError: (message: string) => void;
   onCreateStage: () => void;
   onEditStage: (item: ApplicationStage) => void;
   onDeleteStage: (item: ApplicationStage) => void;
@@ -4263,7 +4722,7 @@ function Timeline({
                   </span>
                   <Badge
                     tone={stage.status}
-                    text={stageStatusLabels[stage.status]}
+                    text={stageStatusLabel(stage.status, stage.type)}
                   />
                 </div>
                 <div className="timeline-meta">
@@ -4278,6 +4737,8 @@ function Timeline({
                   )}
                 </div>
                 {stage.notes && <p>{stage.notes}</p>}
+					<div className="timeline-resource-sections"><ResourceLinksPanel embedded ownerType="stage" ownerID={stage.id} links={stage.links || []} onChanged={onRefresh} onError={onError} onNotify={onNotify} />
+					<SupplementalAttachmentsPanel embedded ownerType="stage" ownerID={stage.id} items={stage.attachments || []} onChanged={onRefresh} onError={onError} onNotify={onNotify} /></div>
               </div>
               <div className="stage-actions">
                 <button
@@ -4947,11 +5408,16 @@ function CompanyDialog({
   });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
+	const [links, setLinks] = useState<ResourceLinkInput[]>([]);
+	const [pendingAttachments, setPendingAttachments] = useState<File[]>([]);
+	useEffect(() => { if (!initial?.id) { setLinks([]); return; } void api.resourceLinks("company", initial.id).then(setLinks).catch((reason) => setError(messageOf(reason))); }, [initial?.id]);
   const submit = async (event: FormEvent) => {
     event.preventDefault();
     setSaving(true);
     try {
-      await api.saveCompany(form);
+		const company = await api.saveCompany(form);
+		await api.saveResourceLinks("company", company.id, links);
+		await uploadStagedSupplementalAttachments("company", company.id, pendingAttachments, (file) => setPendingAttachments((current) => current.filter((item) => item !== file)));
       onSaved();
     } catch (reason) {
       setError(messageOf(reason));
@@ -5000,6 +5466,8 @@ function CompanyDialog({
             }
           />
         </Field>
+		<RelatedLinksFormField links={links} onChange={setLinks} />
+		<StagedSupplementalAttachmentsField files={pendingAttachments} onChange={setPendingAttachments} disabled={saving} />
         <FormError value={error} />
         <Buttons onClose={onClose} saving={saving} label="保存公司" />
       </form>
@@ -5030,11 +5498,16 @@ function CampaignDialog({
   });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
+	const [links, setLinks] = useState<ResourceLinkInput[]>([]);
+	const [pendingAttachments, setPendingAttachments] = useState<File[]>([]);
+	useEffect(() => { if (!initial?.id) { setLinks([]); return; } void api.resourceLinks("campaign", initial.id).then(setLinks).catch((reason) => setError(messageOf(reason))); }, [initial?.id]);
   const submit = async (event: FormEvent) => {
     event.preventDefault();
     setSaving(true);
     try {
-      await api.saveCampaign(form);
+		const campaign = await api.saveCampaign(form);
+		await api.saveResourceLinks("campaign", campaign.id, links);
+		await uploadStagedSupplementalAttachments("campaign", campaign.id, pendingAttachments, (file) => setPendingAttachments((current) => current.filter((item) => item !== file)));
       onSaved();
     } catch (reason) {
       setError(messageOf(reason));
@@ -5118,6 +5591,8 @@ function CampaignDialog({
             }
           />
         </Field>
+		<RelatedLinksFormField links={links} onChange={setLinks} />
+		<StagedSupplementalAttachmentsField files={pendingAttachments} onChange={setPendingAttachments} disabled={saving} />
         <FormError value={error} />
         <Buttons onClose={onClose} saving={saving} label="保存批次" />
       </form>
@@ -5158,6 +5633,8 @@ function PositionDialog({
   );
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
+	const [links, setLinks] = useState<ResourceLinkInput[]>([]);
+	useEffect(() => { if (!initial?.id) { setLinks([]); return; } void api.resourceLinks("position", initial.id).then(setLinks).catch((reason) => setError(messageOf(reason))); }, [initial?.id]);
   const companyCampaigns = campaigns.filter(
     (campaign) => campaign.companyId === companyID,
   );
@@ -5171,7 +5648,8 @@ function PositionDialog({
     setSaving(true);
     setError("");
     try {
-      await api.savePosition({ ...form, priority });
+		const position = await api.savePosition({ ...form, priority });
+		await api.saveResourceLinks("position", position.id, links);
       onSaved();
     } catch (reason) {
       setError(messageOf(reason));
@@ -5298,6 +5776,7 @@ function PositionDialog({
             }
           />
         </Field>
+		<RelatedLinksFormField links={links} onChange={setLinks} />
         <FormError value={error} />
         <Buttons onClose={onClose} saving={saving} label="保存岗位" />
       </form>
@@ -5340,6 +5819,15 @@ function QuickCapturePositionDialog({
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [pendingAttachments, setPendingAttachments] = useState<File[]>([]);
+	const [companyLinks, setCompanyLinks] = useState<ResourceLinkInput[]>([]);
+	const [campaignLinks, setCampaignLinks] = useState<ResourceLinkInput[]>([]);
+	const [positionLinks, setPositionLinks] = useState<ResourceLinkInput[]>([]);
+	const [companyAttachments, setCompanyAttachments] = useState<File[]>([]);
+	const [campaignAttachments, setCampaignAttachments] = useState<File[]>([]);
+	const [existingCompanyLinks, setExistingCompanyLinks] = useState<ResourceLink[]>([]);
+	const [existingCompanyAttachments, setExistingCompanyAttachments] = useState<SupplementalAttachment[]>([]);
+	const [existingCampaignLinks, setExistingCampaignLinks] = useState<ResourceLink[]>([]);
+	const [existingCampaignAttachments, setExistingCampaignAttachments] = useState<SupplementalAttachment[]>([]);
   const [createdPosition, setCreatedPosition] = useState<Position | null>(null);
   const [uploadingName, setUploadingName] = useState("");
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -5461,6 +5949,48 @@ function QuickCapturePositionDialog({
         : next;
     });
   }, [matchingCampaign?.id, matchingCampaign?.opensOn, matchingCampaign?.closesOn, matchingCampaign?.sourceUrl, matchingCampaign?.lastVerifiedOn, matchingCampaign?.processOverview, matchingCampaign?.notes]);
+	useEffect(() => {
+		let active = true;
+		if (!matchingCompany) {
+			setExistingCompanyLinks([]);
+			setExistingCompanyAttachments([]);
+			return () => { active = false; };
+		}
+		void Promise.all([
+			api.resourceLinks("company", matchingCompany.id),
+			api.supplementalAttachments("company", matchingCompany.id),
+		]).then(([links, attachments]) => {
+			if (!active) return;
+			setExistingCompanyLinks(links);
+			setExistingCompanyAttachments(attachments);
+		}).catch(() => {
+			if (!active) return;
+			setExistingCompanyLinks([]);
+			setExistingCompanyAttachments([]);
+		});
+		return () => { active = false; };
+	}, [matchingCompany?.id]);
+	useEffect(() => {
+		let active = true;
+		if (!matchingCampaign) {
+			setExistingCampaignLinks([]);
+			setExistingCampaignAttachments([]);
+			return () => { active = false; };
+		}
+		void Promise.all([
+			api.resourceLinks("campaign", matchingCampaign.id),
+			api.supplementalAttachments("campaign", matchingCampaign.id),
+		]).then(([links, attachments]) => {
+			if (!active) return;
+			setExistingCampaignLinks(links);
+			setExistingCampaignAttachments(attachments);
+		}).catch(() => {
+			if (!active) return;
+			setExistingCampaignLinks([]);
+			setExistingCampaignAttachments([]);
+		});
+		return () => { active = false; };
+	}, [matchingCampaign?.id]);
   const stageFiles = (files: Iterable<File>) => {
     const selected = Array.from(files);
     const oversized = selected.find(
@@ -5497,10 +6027,31 @@ function QuickCapturePositionDialog({
     setSaving(true);
     setError("");
     try {
+		const companyWasNew = !matchingCompany;
+		const campaignWasNew = !matchingCampaign;
       const position =
         createdPosition ||
         (await api.quickCapturePosition({ ...form, priority }));
-      if (!createdPosition) setCreatedPosition(position);
+		if (!createdPosition) setCreatedPosition(position);
+		const detail = await api.positionDetail(position.id);
+		if (companyWasNew && companyLinks.length) {
+			await api.saveResourceLinks("company", detail.company.id, companyLinks);
+			setCompanyLinks([]);
+		}
+		if (companyWasNew && companyAttachments.length) {
+			await uploadStagedSupplementalAttachments("company", detail.company.id, companyAttachments, (file) => setCompanyAttachments((current) => current.filter((item) => item !== file)));
+		}
+		if (campaignWasNew && campaignLinks.length) {
+			await api.saveResourceLinks("campaign", detail.campaign.id, campaignLinks);
+			setCampaignLinks([]);
+		}
+		if (campaignWasNew && campaignAttachments.length) {
+			await uploadStagedSupplementalAttachments("campaign", detail.campaign.id, campaignAttachments, (file) => setCampaignAttachments((current) => current.filter((item) => item !== file)));
+		}
+		if (positionLinks.length) {
+			await api.saveResourceLinks("position", position.id, positionLinks);
+			setPositionLinks([]);
+		}
       for (const file of pendingAttachments) {
         setUploadingName(file.name);
         try {
@@ -5598,6 +6149,9 @@ function QuickCapturePositionDialog({
                 }
               />
             </Field>
+			{!matchingCompany && <RelatedLinksFormField links={companyLinks} onChange={setCompanyLinks} />}
+			{!matchingCompany && <StagedSupplementalAttachmentsField files={companyAttachments} onChange={setCompanyAttachments} disabled={saving} />}
+			{matchingCompany && <ExistingRelatedMaterialsSummary links={existingCompanyLinks} attachments={existingCompanyAttachments} onError={setError} />}
           </div>
         </section>
         <section className="quick-capture-section">
@@ -5684,6 +6238,9 @@ function QuickCapturePositionDialog({
                 }
               />
             </Field>
+			{!matchingCampaign && <RelatedLinksFormField links={campaignLinks} onChange={setCampaignLinks} />}
+			{!matchingCampaign && <StagedSupplementalAttachmentsField files={campaignAttachments} onChange={setCampaignAttachments} disabled={saving} />}
+			{matchingCampaign && <ExistingRelatedMaterialsSummary links={existingCampaignLinks} attachments={existingCampaignAttachments} onError={setError} />}
           </div>
         </section>
         <section className="quick-capture-section">
@@ -5767,6 +6324,7 @@ function QuickCapturePositionDialog({
                 }
               />
             </Field>
+			<RelatedLinksFormField links={positionLinks} onChange={setPositionLinks} />
           </div>
         </section>
         <section className="quick-capture-section quick-attachment-section">
@@ -5876,6 +6434,9 @@ function ApplicationDialog({
   });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
+	const [links, setLinks] = useState<ResourceLinkInput[]>([]);
+	const [pendingAttachments, setPendingAttachments] = useState<File[]>([]);
+	useEffect(() => { if (!initial?.id) { setLinks([]); return; } void api.resourceLinks("application", initial.id).then(setLinks).catch((reason) => setError(messageOf(reason))); }, [initial?.id]);
 	const selectedResume = resumes.find((item) => item.id === form.resumeId);
 	const availableResumes = resumes.filter((item) => !item.archived || item.id === form.resumeId);
   const submit = async (event: FormEvent) => {
@@ -5883,6 +6444,8 @@ function ApplicationDialog({
     setSaving(true);
     try {
 		const application = await api.saveApplication(form);
+		await api.saveResourceLinks("application", application.id, links);
+		await uploadStagedSupplementalAttachments("application", application.id, pendingAttachments, (file) => setPendingAttachments((current) => current.filter((item) => item !== file)));
       if (!form.id) {
         setForm((current) => ({ ...current, id: application.id }));
       }
@@ -5977,6 +6540,8 @@ function ApplicationDialog({
             }
           />
         </Field>
+		<RelatedLinksFormField links={links} onChange={setLinks} />
+		<StagedSupplementalAttachmentsField files={pendingAttachments} onChange={setPendingAttachments} disabled={saving} />
         <FormError value={error} />
         <Buttons onClose={onClose} saving={saving} label="保存投递记录" />
       </form>
@@ -6170,18 +6735,26 @@ function StageDialog({
   });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
+	const [links, setLinks] = useState<ResourceLinkInput[]>(initial?.links || []);
+	const [pendingAttachments, setPendingAttachments] = useState<File[]>([]);
+	useEffect(() => { if (!initial?.id) { setLinks([]); return; } void api.resourceLinks("stage", initial.id).then(setLinks).catch((reason) => setError(messageOf(reason))); }, [initial?.id]);
+  const isResumeScreening = form.type === "resume_screening";
   const submit = async (event: FormEvent) => {
     event.preventDefault();
-    if (
+    const input = isResumeScreening
+      ? { ...form, scheduledStart: "", scheduledEnd: "", resultAt: "" }
+      : form;
+    if (!isResumeScreening && (
       form.scheduledStart &&
       form.scheduledEnd &&
       form.scheduledStart.slice(0, 10) !== form.scheduledEnd.slice(0, 10)
-    ) {
+    )) {
       setError("开始时间和结束时间必须在同一天");
       return;
     }
     const cutoff = form.scheduledEnd || form.scheduledStart;
     if (
+      !isResumeScreening &&
       cutoff &&
       form.resultAt &&
       new Date(form.resultAt).getTime() < new Date(cutoff).getTime()
@@ -6190,6 +6763,7 @@ function StageDialog({
       return;
     }
     if (
+      !isResumeScreening &&
       cutoff &&
       new Date(cutoff).getTime() > Date.now() &&
       form.status !== "scheduled"
@@ -6199,7 +6773,9 @@ function StageDialog({
     }
     setSaving(true);
     try {
-      await api.saveStage(form);
+		const stage = await api.saveStage(input);
+		await api.saveResourceLinks("stage", stage.id, links);
+		await uploadStagedSupplementalAttachments("stage", stage.id, pendingAttachments, (file) => setPendingAttachments((current) => current.filter((item) => item !== file)));
       onSaved();
     } catch (reason) {
       setError(messageOf(reason));
@@ -6228,7 +6804,16 @@ function StageDialog({
           <select
             autoFocus
             value={form.type}
-            onChange={(event) => setForm({ ...form, type: event.target.value })}
+            onChange={(event) => {
+              const type = event.target.value;
+              setForm({
+                ...form,
+                type,
+                ...(type === "resume_screening"
+                  ? { scheduledStart: "", scheduledEnd: "", resultAt: "" }
+                  : {}),
+              });
+            }}
           >
             <optgroup label="系统类型（纳入统计）">
               {systemTypes.map((item) => (
@@ -6264,34 +6849,44 @@ function StageDialog({
               setForm({ ...form, status: event.target.value as StageStatus })
             }
           >
-            <option value="scheduled">已预约</option>
+            <option value="scheduled">
+              {stageStatusLabel("scheduled", form.type)}
+            </option>
             <option value="passed">通过</option>
             <option value="failed">未通过</option>
           </select>
         </Field>
-        <Field label="开始时间">
-          <DateTimeFieldInput
-            value={form.scheduledStart}
-            onChange={(value) => setForm({ ...form, scheduledStart: value })}
-          />
-        </Field>
-        <Field label="结束时间（可选）">
-          <DateTimeFieldInput
-            value={form.scheduledEnd}
-            min={form.scheduledStart || undefined}
-            onChange={(value) => setForm({ ...form, scheduledEnd: value })}
-          />
-        </Field>
-        <Field label="结果通知时间（可选）">
-          <DateTimeFieldInput
-            value={form.resultAt}
-            min={form.scheduledEnd || form.scheduledStart || undefined}
-            onChange={(value) => setForm({ ...form, resultAt: value })}
-          />
-        </Field>
-        <FormHint>
-          开始和结束时间必须在同一天；结果通知不得早于结束时间。填写开始时间或结果通知时间后，才会出现在日历和待办；未来节点只能记录为已预约。
-        </FormHint>
+        {isResumeScreening ? (
+          <FormHint>
+            简历筛选由你手动标记待结果、通过或未通过；无需填写时间，也不会进入日历和待办。
+          </FormHint>
+        ) : (
+          <>
+            <Field label="开始时间">
+              <DateTimeFieldInput
+                value={form.scheduledStart}
+                onChange={(value) => setForm({ ...form, scheduledStart: value })}
+              />
+            </Field>
+            <Field label="结束时间（可选）">
+              <DateTimeFieldInput
+                value={form.scheduledEnd}
+                min={form.scheduledStart || undefined}
+                onChange={(value) => setForm({ ...form, scheduledEnd: value })}
+              />
+            </Field>
+            <Field label="结果通知时间（可选）">
+              <DateTimeFieldInput
+                value={form.resultAt}
+                min={form.scheduledEnd || form.scheduledStart || undefined}
+                onChange={(value) => setForm({ ...form, resultAt: value })}
+              />
+            </Field>
+            <FormHint>
+              开始和结束时间必须在同一天；结果通知不得早于结束时间。填写开始时间或结果通知时间后，才会出现在日历和待办；未来节点只能记录为已预约。
+            </FormHint>
+          </>
+        )}
         <Field wide label="信息来源">
           <input
             type="url"
@@ -6310,6 +6905,8 @@ function StageDialog({
             }
           />
         </Field>
+		<RelatedLinksFormField links={links} onChange={setLinks} />
+		<StagedSupplementalAttachmentsField files={pendingAttachments} onChange={setPendingAttachments} disabled={saving} />
         <FormError value={error} />
         <Buttons onClose={onClose} saving={saving} label="保存流程节点" />
       </form>
