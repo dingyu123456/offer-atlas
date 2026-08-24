@@ -108,6 +108,7 @@ i { font-style: normal; }
 .update-summary small { color: #7d938a; font-size: 9px; font-weight: 750; }
 .update-summary strong { color: #275047; font-size: 15px; }
 .update-summary > div > span { overflow: hidden; color: #688078; font-size: 10px; line-height: 1.45; text-overflow: ellipsis; white-space: nowrap; }
+.update-summary > div > em { color: #98a69f; font-size: 9px; font-style: normal; line-height: 1.35; }
 .update-summary time { align-self: start; color: #8a9b95; font-size: 9px; white-space: nowrap; }
 .update-summary.failed { border-color: #e9c9ca; background: #fffafa; }
 .update-summary.failed .update-summary-icon { color: #b84a52; background: #fee9e9; }
@@ -157,6 +158,8 @@ i { font-style: normal; }
 .text-button:hover { color: #095951; }
 .icon-button { width: 34px; height: 34px; display: grid; place-items: center; border: 1px solid var(--line); border-radius: 6px; color: #60716e; background: var(--surface); }
 .icon-button:hover { border-color: #a9bdb4; color: var(--teal); background: #f8fbf9; }
+.icon-button:disabled { cursor: default; opacity: .48; }
+.icon-button:disabled:hover { border-color: var(--line); color: #60716e; background: var(--surface); }
 .icon-button.small { width: 28px; height: 28px; }
 .danger-button:hover { border-color: #e4bec1; color: var(--rose); background: #fff8f8; }
 .heading-buttons { display: flex; align-items: center; gap: 8px; }

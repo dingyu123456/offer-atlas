@@ -27,7 +27,7 @@ const (
 // buildVersion is intentionally a variable so release builds can override it
 // with -ldflags. The checked-in value is also the version shown in development
 // builds and in the update dialog.
-var buildVersion = "0.2.0"
+var buildVersion = "0.2.1"
 
 // AppUpdate is a user-facing snapshot. It contains no credential or business
 // data and can safely be exposed to the Wails frontend.
@@ -218,7 +218,13 @@ func (m *updateManager) check(ctx context.Context, manual bool) (AppUpdate, erro
 		return m.finishCheckError(manual, errors.New("GitHub Release 未包含有效版本号"))
 	}
 	asset, ok := selectUpdateAsset(release.Assets)
-	if versionGreater(latestVersion, normalizeVersion(buildVersion)) && !ok {
+	m.mu.RLock()
+	currentVersion := normalizeVersion(m.status.CurrentVersion)
+	m.mu.RUnlock()
+	if currentVersion == "" {
+		currentVersion = normalizeVersion(buildVersion)
+	}
+	if versionGreater(latestVersion, currentVersion) && !ok {
 		return m.finishCheckError(manual, errors.New("新版本未提供 Windows 安装包"))
 	}
 
@@ -229,7 +235,7 @@ func (m *updateManager) check(ctx context.Context, manual bool) (AppUpdate, erro
 	m.status.ReleaseNotes = strings.TrimSpace(release.Body)
 	m.status.PublishedAt = release.PublishedAt
 	m.status.ReleaseURL = release.HTMLURL
-	m.status.Available = versionGreater(latestVersion, normalizeVersion(buildVersion))
+	m.status.Available = versionGreater(latestVersion, currentVersion)
 	m.downloadPath = ""
 	m.assetURL = ""
 	m.assetDigest = ""

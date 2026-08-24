@@ -4393,12 +4393,14 @@ function Dialog({
   children,
   onClose,
   kicker = "手动录入",
+  closeDisabled = false,
 }: {
   title: string;
   subtitle: string;
   children: ReactNode;
   onClose: () => void;
   kicker?: string;
+  closeDisabled?: boolean;
 }) {
   return (
     <div className="dialog-backdrop" role="presentation">
@@ -4414,7 +4416,7 @@ function Dialog({
             <h2>{title}</h2>
             <p>{subtitle}</p>
           </div>
-          <button className="icon-button" title="关闭" onClick={onClose}>
+          <button className="icon-button" title={closeDisabled ? "操作进行中" : "关闭"} disabled={closeDisabled} onClick={onClose}>
             <X size={18} />
           </button>
         </div>
@@ -4493,7 +4495,8 @@ function UpdateDialog({
       title="应用更新"
       subtitle="通过 GitHub Release 获取已校验的新版本。更新只替换应用程序，不会改动本地数据、附件、备份或云同步配置。"
       kicker="Offer Atlas"
-      onClose={busy ? () => undefined : onClose}
+      onClose={onClose}
+      closeDisabled={busy}
     >
       <div className="update-dialog-body">
         <section className={`update-summary update-${current.state}`}>
@@ -4508,6 +4511,7 @@ function UpdateDialog({
                 : current.state === "failed" ? "暂时无法检查更新" : "已是最新版本"}
             </strong>
             <span>{current.message}</span>
+            <em>{current.checkedAt ? `最近检查 ${textDateTime(current.checkedAt)}` : "尚未检查更新"}</em>
           </div>
           {current.publishedAt && <time>{textDate(current.publishedAt)} 发布</time>}
         </section>
