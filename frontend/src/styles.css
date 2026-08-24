@@ -305,8 +305,18 @@ h2 { margin-bottom: 0; color: var(--ink); font-size: 14px; line-height: 1.3; }
 .detail-notes p { margin: 7px 0 0; color: #63746e; font-size: 11px; line-height: 1.65; white-space: pre-wrap; }
 .related-links-panel, .supplemental-attachments { margin-bottom: 16px; overflow: hidden; }
 .embedded-resource-section { overflow: hidden; border-top: 1px solid #e8eeea; }
-.timeline-resource-sections { display: grid; gap: 9px; margin: 12px 0 2px; }
+.timeline-stage-resources { margin-top: 11px; }
+.timeline-stage-resource-toggle { max-width: 100%; min-height: 34px; display: inline-flex; align-items: center; gap: 8px; padding: 5px 9px; border: 1px solid #dbe6e0; border-radius: 6px; color: #60756d; background: #f8fbf9; font: inherit; text-align: left; transition: border-color .16s ease, color .16s ease, background-color .16s ease, box-shadow .16s ease; }
+.timeline-stage-resource-toggle:hover, .timeline-stage-resource-toggle.is-expanded { border-color: #b9d6c8; color: #176c61; background: #f1f9f5; box-shadow: 0 2px 6px rgba(43, 91, 76, .05); }
+.timeline-stage-resource-toggle:focus-visible { outline: 2px solid #6da995; outline-offset: 2px; }
+.timeline-stage-resource-mark { width: 26px; height: 20px; position: relative; display: grid; place-items: center; flex: 0 0 26px; color: #358272; }
+.timeline-stage-resource-mark svg:first-child { position: absolute; left: 1px; top: 2px; }.timeline-stage-resource-mark svg:last-child { position: absolute; right: 1px; bottom: 1px; color: #74978c; }
+.timeline-stage-resource-copy { min-width: 0; display: flex; align-items: baseline; gap: 7px; }
+.timeline-stage-resource-copy strong { color: inherit; font-size: 10px; font-weight: 750; white-space: nowrap; }.timeline-stage-resource-copy small { overflow: hidden; color: #7d9088; font-size: 9px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
+.timeline-stage-resource-toggle > svg { flex: 0 0 auto; color: #6f887e; }
+.timeline-resource-sections { display: grid; gap: 9px; margin: 8px 0 2px; }
 .timeline-resource-sections .related-links-panel, .timeline-resource-sections .supplemental-attachments { margin: 0; background: #fbfdfc; }
+.timeline-resource-sections > .embedded-resource-section:first-child { border-top-color: #dce8e1; }
 .timeline-resource-sections .related-links-header, .timeline-resource-sections .attachment-header { min-height: 46px; padding: 9px 11px; }.timeline-resource-sections .related-links-header h2, .timeline-resource-sections .attachment-header h2 { font-size: 11px; }.timeline-resource-sections .related-links-header span, .timeline-resource-sections .attachment-header span { font-size: 9px; }.timeline-resource-sections .related-links-panel .compact-button, .timeline-resource-sections .supplemental-attachments .attachment-add-button { height: 28px; padding: 0 7px; font-size: 9px; }.timeline-resource-sections .attachment-paste-zone { margin: 0 11px 10px; }.timeline-resource-sections .related-link-list { padding: 0 11px 10px; }.timeline-resource-sections .related-link-row { min-height: 44px; }.timeline-resource-sections .attachment-body { padding: 0 11px 10px; }.timeline-resource-sections .attachment-empty { min-height: 70px; padding: 9px 11px; }.timeline-resource-sections .attachment-gallery { grid-template-columns: repeat(auto-fill, minmax(118px, 1fr)); }
 .related-links-header, .attachment-header { min-height: 58px; padding: 12px 18px; }
 .related-links-header > div, .attachment-header > div { min-width: 0; }
@@ -407,7 +417,7 @@ h2 { margin-bottom: 0; color: var(--ink); font-size: 14px; line-height: 1.3; }
 .timeline-title { display: flex; align-items: center; flex-wrap: wrap; gap: 7px; }
 .timeline-title strong { color: #30413c; font-size: 13px; }
 .stage-type { padding: 3px 6px; border-radius: 4px; color: #6a7974; background: #f0f3f0; font-size: 9px; }
-.timeline-meta { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; margin-top: 7px; color: #899792; font-size: 10px; }
+.timeline-meta { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; margin-top: 7px; color: #71827b; font-size: 10px; }
 .timeline-meta a { color: var(--teal); font-size: 10px; text-decoration: none; }
 .timeline-meta a:hover { text-decoration: underline; }
 .timeline-content p { margin: 8px 0 0; color: #687973; font-size: 11px; line-height: 1.6; white-space: pre-wrap; }

@@ -4712,14 +4712,18 @@ function Timeline({
               </div>
               <div className="timeline-content">
                 <div className="timeline-title">
-                  <strong>
-                    {typeLabel(stage.type)}
-                    {stage.content ? ` · ${stage.content}` : ""}
-                  </strong>
-                  <span className={`stage-type ${stage.type}`}>
-                    <StageGlyph type={stage.type} />
-                    {typeLabel(stage.type)}
-                  </span>
+                  {(() => {
+                    const typeName = typeLabel(stage.type);
+                    const content = stage.content.trim();
+                    const hasDistinctContent = Boolean(content && content !== typeName);
+                    return <>
+                      <strong>{hasDistinctContent ? content : typeName}</strong>
+                      {hasDistinctContent && <span className={`stage-type ${stage.type}`}>
+                        <StageGlyph type={stage.type} />
+                        {typeName}
+                      </span>}
+                    </>;
+                  })()}
                   <Badge
                     tone={stage.status}
                     text={stageStatusLabel(stage.status, stage.type)}
@@ -4737,8 +4741,12 @@ function Timeline({
                   )}
                 </div>
                 {stage.notes && <p>{stage.notes}</p>}
-					<div className="timeline-resource-sections"><ResourceLinksPanel embedded ownerType="stage" ownerID={stage.id} links={stage.links || []} onChanged={onRefresh} onError={onError} onNotify={onNotify} />
-					<SupplementalAttachmentsPanel embedded ownerType="stage" ownerID={stage.id} items={stage.attachments || []} onChanged={onRefresh} onError={onError} onNotify={onNotify} /></div>
+                <TimelineStageResources
+                  stage={stage}
+                  onNotify={onNotify}
+                  onRefresh={onRefresh}
+                  onError={onError}
+                />
               </div>
               <div className="stage-actions">
                 <button
@@ -4781,6 +4789,73 @@ function Timeline({
     </section>
   );
 }
+
+function TimelineStageResources({
+  stage,
+  onNotify,
+  onRefresh,
+  onError,
+}: {
+  stage: ApplicationStage;
+  onNotify: (message: string) => void;
+  onRefresh: () => void;
+  onError: (message: string) => void;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  const linkCount = stage.links?.length || 0;
+  const attachmentCount = stage.attachments?.length || 0;
+  const summary = [
+    linkCount ? `${linkCount} 条链接` : "",
+    attachmentCount ? `${attachmentCount} 个文件` : "",
+  ].filter(Boolean).join(" · ") || "未添加链接或文件";
+  const panelID = `stage-resources-${stage.id}`;
+
+  return (
+    <div className="timeline-stage-resources">
+      <button
+        type="button"
+        className={`timeline-stage-resource-toggle ${expanded ? "is-expanded" : ""}`}
+        aria-expanded={expanded}
+        aria-controls={panelID}
+        title={expanded ? "收起相关资料" : "展开相关资料"}
+        onClick={() => setExpanded((value) => !value)}
+      >
+        <span className="timeline-stage-resource-mark" aria-hidden="true">
+          <LinkIcon size={13} />
+          <FileText size={13} />
+        </span>
+        <span className="timeline-stage-resource-copy">
+          <strong>相关资料</strong>
+          <small>{summary}</small>
+        </span>
+        {expanded ? <ChevronDown size={15} aria-hidden="true" /> : <ChevronRight size={15} aria-hidden="true" />}
+      </button>
+      {expanded && (
+        <div className="timeline-resource-sections" id={panelID}>
+          <ResourceLinksPanel
+            embedded
+            ownerType="stage"
+            ownerID={stage.id}
+            links={stage.links || []}
+            onChanged={onRefresh}
+            onError={onError}
+            onNotify={onNotify}
+          />
+          <SupplementalAttachmentsPanel
+            embedded
+            ownerType="stage"
+            ownerID={stage.id}
+            items={stage.attachments || []}
+            onChanged={onRefresh}
+            onError={onError}
+            onNotify={onNotify}
+          />
+        </div>
+      )}
+    </div>
+  );
+}
+
 function Info({
   label,
   value,
