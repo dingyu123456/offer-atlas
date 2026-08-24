@@ -4393,6 +4393,12 @@ function validExternalURL(value?: string) {
   }
 }
 
+function validPriority(value: string) {
+  const normalized = value.trim();
+  if (!/^[1-5]$/.test(normalized)) return null;
+  return Number(normalized);
+}
+
 function Dialog({
   title,
   subtitle,
@@ -5147,6 +5153,9 @@ function PositionDialog({
     priority: initial?.priority || 3,
     notes: initial?.notes || "",
   });
+  const [priorityText, setPriorityText] = useState(
+    String(initial?.priority || 3),
+  );
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const companyCampaigns = campaigns.filter(
@@ -5154,9 +5163,15 @@ function PositionDialog({
   );
   const submit = async (event: FormEvent) => {
     event.preventDefault();
+    const priority = validPriority(priorityText);
+    if (priority === null) {
+      setError("优先级请输入 1-5 之间的整数。");
+      return;
+    }
     setSaving(true);
+    setError("");
     try {
-      await api.savePosition(form);
+      await api.savePosition({ ...form, priority });
       onSaved();
     } catch (reason) {
       setError(messageOf(reason));
@@ -5268,10 +5283,10 @@ function PositionDialog({
             type="number"
             min={1}
             max={5}
-            value={form.priority}
-            onChange={(event) =>
-              setForm({ ...form, priority: Number(event.target.value) })
-            }
+            step={1}
+            required
+            value={priorityText}
+            onChange={(event) => setPriorityText(event.target.value)}
           />
         </Field>
         <Field wide label="岗位备注">
@@ -5321,6 +5336,7 @@ function QuickCapturePositionDialog({
     priority: 3,
     notes: "",
   });
+  const [priorityText, setPriorityText] = useState("3");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [pendingAttachments, setPendingAttachments] = useState<File[]>([]);
@@ -5473,11 +5489,17 @@ function QuickCapturePositionDialog({
   };
   const submit = async (event: FormEvent) => {
     event.preventDefault();
+    const priority = validPriority(priorityText);
+    if (priority === null) {
+      setError("优先级请输入 1-5 之间的整数。");
+      return;
+    }
     setSaving(true);
     setError("");
     try {
       const position =
-        createdPosition || (await api.quickCapturePosition(form));
+        createdPosition ||
+        (await api.quickCapturePosition({ ...form, priority }));
       if (!createdPosition) setCreatedPosition(position);
       for (const file of pendingAttachments) {
         setUploadingName(file.name);
@@ -5720,10 +5742,10 @@ function QuickCapturePositionDialog({
                 type="number"
                 min={1}
                 max={5}
-                value={form.priority}
-                onChange={(event) =>
-                  setForm({ ...form, priority: Number(event.target.value) })
-                }
+                step={1}
+                required
+                value={priorityText}
+                onChange={(event) => setPriorityText(event.target.value)}
               />
             </Field>
             <Field wide label="岗位招聘链接">
