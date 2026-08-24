@@ -84,14 +84,41 @@ func TestUpdateVersionComparisonAndHelperScript(t *testing.T) {
 	}
 }
 
-func TestUpdateAssetDownloadURL(t *testing.T) {
+func TestUpdateAssetDownloadURLs(t *testing.T) {
 	asset := githubReleaseAsset{ID: 42, BrowserDownloadURL: "https://github.com/example/fallback.exe"}
-	if got, want := downloadURLForAsset(asset), defaultUpdateAssetAPIURL+"42"; got != want {
-		t.Fatalf("expected API asset URL %q, got %q", want, got)
+	primary, fallback := downloadURLsForAsset(asset)
+	if got, want := primary, asset.BrowserDownloadURL; got != want {
+		t.Fatalf("expected direct download URL %q, got %q", want, got)
+	}
+	if got, want := fallback, defaultUpdateAssetAPIURL+"42"; got != want {
+		t.Fatalf("expected API fallback URL %q, got %q", want, got)
 	}
 	asset.ID = 0
-	if got, want := downloadURLForAsset(asset), asset.BrowserDownloadURL; got != want {
-		t.Fatalf("expected browser fallback %q, got %q", want, got)
+	primary, fallback = downloadURLsForAsset(asset)
+	if primary != asset.BrowserDownloadURL || fallback != "" {
+		t.Fatalf("expected direct-only URL, got primary=%q fallback=%q", primary, fallback)
+	}
+}
+
+func TestUpdateDownloadFallsBackAfterDirectConnectionFailure(t *testing.T) {
+	payload := []byte("MZ Offer Atlas verified update")
+	digest := sha256.Sum256(payload)
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if request.URL.Path != "/asset" {
+			writer.WriteHeader(http.StatusNotFound)
+			return
+		}
+		_, _ = writer.Write(payload)
+	}))
+	defer server.Close()
+	manager := testUpdateManager(t, server.URL+"/latest")
+	manager.status = AppUpdate{CurrentVersion: "0.2.0", LatestVersion: "0.2.1", Available: true, State: "available", AssetName: "OfferAtlas-windows-amd64.exe", AssetSize: int64(len(payload))}
+	manager.assetURL = "http://127.0.0.1:1/unreachable"
+	manager.fallbackAssetURL = server.URL + "/asset"
+	manager.assetDigest = "sha256:" + hex.EncodeToString(digest[:])
+	status, err := manager.download(context.Background())
+	if err != nil || status.State != "downloaded" {
+		t.Fatalf("expected fallback download to succeed, status=%#v err=%v", status, err)
 	}
 }
 

@@ -36,7 +36,7 @@ const (
 // buildVersion is intentionally a variable so release builds can override it
 // with -ldflags. The checked-in value is also the version shown in development
 // builds and in the update dialog.
-var buildVersion = "0.2.3"
+var buildVersion = "0.2.4"
 
 // AppUpdate is a user-facing snapshot. It contains no credential or business
 // data and can safely be exposed to the Wails frontend.
@@ -91,6 +91,14 @@ func (e *updateCheckRetriesExhaustedError) Unwrap() error {
 	return e.last
 }
 
+type updateDownloadHTTPError struct {
+	status int
+}
+
+func (e *updateDownloadHTTPError) Error() string {
+	return fmt.Sprintf("下载更新包时 GitHub 返回 HTTP %d", e.status)
+}
+
 type updatePersistentState struct {
 	CheckedAt string `json:"checkedAt"`
 }
@@ -104,17 +112,18 @@ type updateInstallPlan struct {
 // It deliberately has no dependency on the data store: replacing the program
 // must never move, overwrite, or restore user data.
 type updateManager struct {
-	mu             sync.RWMutex
-	status         AppUpdate
-	assetURL       string
-	assetDigest    string
-	downloadPath   string
-	apiURL         string
-	client         *http.Client
-	stagingDir     string
-	statePath      string
-	executablePath string
-	launch         func(string, ...string) error
+	mu               sync.RWMutex
+	status           AppUpdate
+	assetURL         string
+	fallbackAssetURL string
+	assetDigest      string
+	downloadPath     string
+	apiURL           string
+	client           *http.Client
+	stagingDir       string
+	statePath        string
+	executablePath   string
+	launch           func(string, ...string) error
 }
 
 func newUpdateManager(dataDirectory string) (*updateManager, error) {
@@ -255,10 +264,11 @@ func (m *updateManager) check(ctx context.Context, manual bool, force bool) (App
 	m.status.Available = versionGreater(latestVersion, currentVersion)
 	m.downloadPath = ""
 	m.assetURL = ""
+	m.fallbackAssetURL = ""
 	m.assetDigest = ""
 	m.status.DownloadedBytes = 0
 	if m.status.Available {
-		m.assetURL = downloadURLForAsset(asset)
+		m.assetURL, m.fallbackAssetURL = downloadURLsForAsset(asset)
 		m.assetDigest = asset.Digest
 		m.status.AssetName = asset.Name
 		m.status.AssetSize = asset.Size
@@ -394,14 +404,15 @@ func selectUpdateAsset(assets []githubReleaseAsset) (githubReleaseAsset, bool) {
 	return githubReleaseAsset{}, false
 }
 
-// Release asset API requests avoid an unnecessary direct connection to the
-// github.com download page and redirect straight to GitHub's file host. Older
-// releases or test servers without an asset ID keep using the public URL.
-func downloadURLForAsset(asset githubReleaseAsset) string {
+// BrowserDownloadURL is the normal Release route and tends to have better CDN
+// routing for desktop users. The API asset route is retained as a fallback for
+// networks that cannot establish the direct github.com connection.
+func downloadURLsForAsset(asset githubReleaseAsset) (primary, fallback string) {
+	primary = asset.BrowserDownloadURL
 	if asset.ID > 0 {
-		return defaultUpdateAssetAPIURL + strconv.FormatInt(asset.ID, 10)
+		fallback = defaultUpdateAssetAPIURL + strconv.FormatInt(asset.ID, 10)
 	}
-	return asset.BrowserDownloadURL
+	return primary, fallback
 }
 
 func (m *updateManager) download(ctx context.Context) (AppUpdate, error) {
@@ -415,7 +426,7 @@ func (m *updateManager) download(ctx context.Context) (AppUpdate, error) {
 		m.mu.Unlock()
 		return m.snapshot(), errors.New("请先检查到可用的新版本")
 	}
-	assetURL, digest, version := m.assetURL, m.assetDigest, m.status.LatestVersion
+	assetURL, fallbackAssetURL, digest, version := m.assetURL, m.fallbackAssetURL, m.assetDigest, m.status.LatestVersion
 	assetName, assetSize := m.status.AssetName, m.status.AssetSize
 	m.status.State = "downloading"
 	m.status.Message = "正在下载并校验新版本"
@@ -428,24 +439,14 @@ func (m *updateManager) download(ctx context.Context) (AppUpdate, error) {
 	}
 	downloadCtx, cancelDownload := context.WithTimeout(ctx, updateDownloadTimeout)
 	defer cancelDownload()
-	request, err := http.NewRequestWithContext(downloadCtx, http.MethodGet, assetURL, nil)
-	if err != nil {
-		return m.finishDownloadError(err)
-	}
-	request.Header.Set("User-Agent", "OfferAtlas-Updater")
-	request.Header.Set("Accept", "application/octet-stream")
-	request.Header.Set("X-GitHub-Api-Version", "2022-11-28")
-	response, err := m.client.Do(request)
+	response, err := m.openUpdateDownload(downloadCtx, assetURL, fallbackAssetURL)
 	if err != nil {
 		if errors.Is(err, context.DeadlineExceeded) {
 			return m.finishDownloadError(fmt.Errorf("下载超过 %s，请检查网络后重试", updateDownloadTimeout))
 		}
-		return m.finishDownloadError(fmt.Errorf("download update: %w", err))
+		return m.finishDownloadError(err)
 	}
 	defer response.Body.Close()
-	if response.StatusCode != http.StatusOK {
-		return m.finishDownloadError(fmt.Errorf("下载更新包时 GitHub 返回 HTTP %d", response.StatusCode))
-	}
 	if err := os.MkdirAll(m.stagingDir, 0o755); err != nil {
 		return m.finishDownloadError(err)
 	}
@@ -511,6 +512,66 @@ func (m *updateManager) download(ctx context.Context) (AppUpdate, error) {
 	status := m.status
 	m.mu.Unlock()
 	return status, nil
+}
+
+func (m *updateManager) openUpdateDownload(ctx context.Context, primaryURL, fallbackURL string) (*http.Response, error) {
+	urls := []string{primaryURL}
+	if fallbackURL != "" && fallbackURL != primaryURL {
+		urls = append(urls, fallbackURL)
+	}
+	var lastErr error
+	for index, assetURL := range urls {
+		request, err := http.NewRequestWithContext(ctx, http.MethodGet, assetURL, nil)
+		if err != nil {
+			return nil, err
+		}
+		request.Header.Set("User-Agent", "OfferAtlas-Updater")
+		request.Header.Set("Accept", "application/octet-stream")
+		request.Header.Set("X-GitHub-Api-Version", "2022-11-28")
+		response, err := m.client.Do(request)
+		if err == nil && response.StatusCode == http.StatusOK {
+			return response, nil
+		}
+		if response != nil {
+			err = &updateDownloadHTTPError{status: response.StatusCode}
+			_ = response.Body.Close()
+		}
+		if err == nil {
+			err = errors.New("下载更新包时未获得有效响应")
+		}
+		lastErr = err
+		if index == len(urls)-1 || !isFallbackableUpdateDownloadError(err) {
+			break
+		}
+		m.setUpdateDownloadFallbackMessage()
+	}
+	if lastErr == nil {
+		lastErr = errors.New("下载更新包失败")
+	}
+	return nil, fmt.Errorf("download update: %w", lastErr)
+}
+
+func isFallbackableUpdateDownloadError(err error) bool {
+	if errors.Is(err, context.DeadlineExceeded) {
+		return true
+	}
+	var requestError *url.Error
+	if errors.As(err, &requestError) {
+		return true
+	}
+	var responseError *updateDownloadHTTPError
+	if errors.As(err, &responseError) {
+		return responseError.status == http.StatusForbidden || responseError.status == http.StatusRequestTimeout || responseError.status == http.StatusTooManyRequests || responseError.status >= http.StatusInternalServerError
+	}
+	return false
+}
+
+func (m *updateManager) setUpdateDownloadFallbackMessage() {
+	m.mu.Lock()
+	if m.status.State == "downloading" {
+		m.status.Message = "主下载线路暂不可用，正在切换备用线路"
+	}
+	m.mu.Unlock()
 }
 
 func (m *updateManager) setDownloadProgress(downloaded, size int64) {
