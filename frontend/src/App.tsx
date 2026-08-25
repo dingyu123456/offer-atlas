@@ -713,6 +713,17 @@ export default function App() {
     setView("applications");
   };
 
+  // Detail pages are rendered above the module view. Entering any sidebar
+  // module must dismiss every detail context first, otherwise the old detail
+  // page continues to win the render branch and only the back-label changes.
+  const navigateToModule = (nextView: View) => {
+    setSelectedPosition(null);
+    setSelectedApplication(null);
+    setSelectedCompany(null);
+    setSelectedCampaign(null);
+    setView(nextView);
+  };
+
   const title = selectedPosition
     ? selectedPosition.position.title
     : selectedApplication
@@ -745,6 +756,8 @@ export default function App() {
           ? "返回搜索结果"
         : view === "positions"
           ? "返回岗位管理"
+				: view === "resumes"
+					? "返回简历库"
 				: view === "directory"
 					? "返回公司与批次"
             : view === "dashboard"
@@ -767,80 +780,54 @@ export default function App() {
               active={
                 view === "dashboard" &&
                 !selectedPosition &&
-                !selectedApplication
+                !selectedApplication &&
+                !selectedCompany &&
+                !selectedCampaign
               }
               icon={<LayoutDashboard size={17} />}
-              onClick={() => {
-                setSelectedPosition(null);
-                setSelectedApplication(null);
-                setView("dashboard");
-              }}
+              onClick={() => navigateToModule("dashboard")}
             >
               总览
             </Nav>
             <Nav
               active={view === "positions" || Boolean(selectedPosition)}
               icon={<BriefcaseBusiness size={17} />}
-              onClick={() => {
-                setSelectedPosition(null);
-                setSelectedApplication(null);
-                setView("positions");
-              }}
+              onClick={() => navigateToModule("positions")}
             >
               岗位管理
             </Nav>
             <Nav
               active={view === "applications" || Boolean(selectedApplication)}
               icon={<ClipboardList size={17} />}
-              onClick={() => {
-                setSelectedPosition(null);
-                setSelectedApplication(null);
-                setView("applications");
-              }}
+              onClick={() => navigateToModule("applications")}
             >
               投递记录
             </Nav>
 				<Nav
 					active={view === "resumes"}
 					icon={<FileStack size={17} />}
-					onClick={() => {
-						setSelectedPosition(null);
-						setSelectedApplication(null);
-						setView("resumes");
-					}}
+					onClick={() => navigateToModule("resumes")}
 				>
 					简历库
 				</Nav>
             <Nav
               active={view === "calendar"}
               icon={<CalendarRange size={17} />}
-              onClick={() => {
-                setSelectedPosition(null);
-                setSelectedApplication(null);
-                setView("calendar");
-              }}
+              onClick={() => navigateToModule("calendar")}
             >
               日历
             </Nav>
             <Nav
               active={view === "todos"}
               icon={<ListTodo size={17} />}
-              onClick={() => {
-                setSelectedPosition(null);
-                setSelectedApplication(null);
-                setView("todos");
-              }}
+              onClick={() => navigateToModule("todos")}
             >
               待办
             </Nav>
             <Nav
-              active={view === "directory"}
+              active={view === "directory" || Boolean(selectedCompany) || Boolean(selectedCampaign)}
               icon={<Building2 size={17} />}
-              onClick={() => {
-                setSelectedPosition(null);
-                setSelectedApplication(null);
-                setView("directory");
-              }}
+              onClick={() => navigateToModule("directory")}
             >
               公司与批次
             </Nav>
