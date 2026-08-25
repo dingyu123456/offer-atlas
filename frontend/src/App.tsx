@@ -117,6 +117,12 @@ type View =
   | "todos"
   | "directory"
   | "search";
+type NavigationEntry = {
+  kind: "view" | "company" | "campaign" | "position" | "application";
+  view: View;
+  id?: string;
+  label: string;
+};
 type DialogName =
   | "company"
   | "campaign"
@@ -308,6 +314,18 @@ function useStageTypeLabel() {
   const catalog = useContext(StageTypeCatalogContext);
   return (type: StageType) => stageTypeLabel(type, catalog);
 }
+function viewLabel(view: View) {
+  switch (view) {
+    case "dashboard": return "总览";
+    case "positions": return "岗位管理";
+    case "applications": return "投递记录";
+    case "resumes": return "简历库";
+    case "calendar": return "日历";
+    case "todos": return "待办";
+    case "directory": return "公司与批次";
+    case "search": return "搜索结果";
+  }
+}
 const inputDate = (value?: string) =>
   value ? new Date(value).toISOString().slice(0, 10) : "";
 const inputDateTime = (value?: string) => {
@@ -320,6 +338,7 @@ const inputDateTime = (value?: string) => {
 
 export default function App() {
   const [view, setView] = useState<View>("dashboard");
+  const [navigationStack, setNavigationStack] = useState<NavigationEntry[]>([]);
   const [dialog, setDialog] = useState<DialogName>(null);
   const [dashboard, setDashboard] = useState<Dashboard>(emptyDashboard);
   const [health, setHealth] = useState<Health | null>(null);
@@ -631,46 +650,92 @@ export default function App() {
     setEditingStage(null);
     setDialog(name);
   };
-  const openPosition = async (id: string) => {
+  // Detail loading is deliberately side-effect free with respect to navigation.
+  // Saves, sync refreshes and attachment actions must not create new back entries.
+  const loadPositionDetail = async (id: string) => {
     try {
-		setSelectedCompany(null);
-		setSelectedCampaign(null);
-      setSelectedApplication(null);
       setSelectedPosition(await api.positionDetail(id));
     } catch (reason) {
       setError(messageOf(reason));
     }
   };
-  const openApplication = async (id: string) => {
+  const loadApplicationDetail = async (id: string) => {
     try {
-		setSelectedCompany(null);
-		setSelectedCampaign(null);
-      setSelectedPosition(null);
       setSelectedApplication(await api.applicationDetail(id));
     } catch (reason) {
       setError(messageOf(reason));
     }
   };
-	const openCompany = async (id: string) => {
+	const loadCompanyDetail = async (id: string) => {
 		try {
-			setSelectedPosition(null);
-			setSelectedApplication(null);
-			setSelectedCampaign(null);
 			setSelectedCompany(await api.companyDetail(id));
 		} catch (reason) {
 			setError(messageOf(reason));
 		}
 	};
-	const openCampaign = async (id: string) => {
+	const loadCampaignDetail = async (id: string) => {
 		try {
-			setSelectedPosition(null);
-			setSelectedApplication(null);
-			setSelectedCompany(null);
 			setSelectedCampaign(await api.campaignDetail(id));
 		} catch (reason) {
 			setError(messageOf(reason));
 		}
 	};
+  const currentNavigationEntry = (): NavigationEntry => {
+    if (selectedCompany) return { kind: "company", view, id: selectedCompany.company.id, label: selectedCompany.company.name };
+    if (selectedCampaign) return { kind: "campaign", view, id: selectedCampaign.campaign.id, label: selectedCampaign.campaign.name };
+    if (selectedPosition) return { kind: "position", view, id: selectedPosition.position.id, label: selectedPosition.position.title };
+    if (selectedApplication) return { kind: "application", view, id: selectedApplication.application.id, label: selectedApplication.position.title };
+    return { kind: "view", view, label: viewLabel(view) };
+  };
+  const enterDetail = async (kind: NavigationEntry["kind"], id: string) => {
+    const current = currentNavigationEntry();
+    setNavigationStack((stack) => [...stack, current]);
+    setSelectedPosition(null);
+    setSelectedApplication(null);
+    setSelectedCompany(null);
+    setSelectedCampaign(null);
+    if (kind === "company") {
+      setView("directory");
+      await loadCompanyDetail(id);
+    }
+    if (kind === "campaign") {
+      setView("directory");
+      await loadCampaignDetail(id);
+    }
+    if (kind === "position") {
+      setView("positions");
+      await loadPositionDetail(id);
+    }
+    if (kind === "application") {
+      setView("applications");
+      await loadApplicationDetail(id);
+    }
+  };
+  const goBack = () => {
+    const previous = navigationStack[navigationStack.length - 1];
+    if (!previous) {
+      setSelectedPosition(null);
+      setSelectedApplication(null);
+      setSelectedCompany(null);
+      setSelectedCampaign(null);
+      return;
+    }
+    setNavigationStack((stack) => stack.slice(0, -1));
+    setSelectedPosition(null);
+    setSelectedApplication(null);
+    setSelectedCompany(null);
+    setSelectedCampaign(null);
+    setView(previous.view);
+    if (previous.kind === "company" && previous.id) void loadCompanyDetail(previous.id);
+    if (previous.kind === "campaign" && previous.id) void loadCampaignDetail(previous.id);
+    if (previous.kind === "position" && previous.id) void loadPositionDetail(previous.id);
+    if (previous.kind === "application" && previous.id) void loadApplicationDetail(previous.id);
+  };
+  // Public entry points used by list rows and cross-detail links.
+  const openPosition = (id: string) => enterDetail("position", id);
+  const openApplication = (id: string) => enterDetail("application", id);
+  const openCompany = (id: string) => enterDetail("company", id);
+  const openCampaign = (id: string) => enterDetail("campaign", id);
   const openDeletion = (target: DeletionTarget) => {
     setDeletionTarget(target);
     setDialog("delete");
@@ -681,12 +746,18 @@ export default function App() {
     setDeletionTarget(null);
     setSelectedPosition(null);
     setSelectedApplication(null);
+    setSelectedCompany(null);
+    setSelectedCampaign(null);
+    setNavigationStack([]);
     await load();
     if (target) notify(`${deletionLabels[target.entityType]}已删除`);
   };
   const runSearch = () => {
     setSelectedPosition(null);
     setSelectedApplication(null);
+    setSelectedCompany(null);
+    setSelectedCampaign(null);
+    setNavigationStack([]);
     setPositionPage(1);
     setApplicationPage(1);
     setSearchQuery(searchDraft.trim());
@@ -705,6 +776,9 @@ export default function App() {
   ) => {
     setSelectedPosition(null);
     setSelectedApplication(null);
+    setSelectedCompany(null);
+    setSelectedCampaign(null);
+    setNavigationStack([]);
     setApplicationFilter(status);
     setApplicationStageType(stageType);
     setApplicationStageStatus(stageStatus);
@@ -721,6 +795,7 @@ export default function App() {
     setSelectedApplication(null);
     setSelectedCompany(null);
     setSelectedCampaign(null);
+    setNavigationStack([]);
     setView(nextView);
   };
 
@@ -748,7 +823,16 @@ export default function App() {
                   ? "公司与批次"
                   : "搜索结果";
   const sourceBackLabel =
-    view === "calendar"
+    navigationStack.length
+      ? (() => {
+          const previous = navigationStack[navigationStack.length - 1];
+          if (previous.kind === "company") return "返回公司详情";
+          if (previous.kind === "campaign") return "返回批次详情";
+          if (previous.kind === "position") return "返回岗位详情";
+          if (previous.kind === "application") return "返回投递详情";
+          return `返回${previous.label}`;
+        })()
+      : view === "calendar"
       ? "返回日历"
       : view === "todos"
         ? "返回待办"
@@ -929,24 +1013,24 @@ export default function App() {
             <CompanyDetailView
               detail={selectedCompany}
               backLabel={sourceBackLabel}
-              onBack={() => setSelectedCompany(null)}
+              onBack={goBack}
               onEdit={() => { setEditingCompany(selectedCompany.company); setDialog("company"); }}
               onDelete={() => openDeletion({ entityType: "company", id: selectedCompany.company.id, name: selectedCompany.company.name })}
               onOpenCampaign={(id) => void openCampaign(id)}
               onNotify={notify}
-              onRefresh={() => void openCompany(selectedCompany.company.id)}
+              onRefresh={() => void loadCompanyDetail(selectedCompany.company.id)}
               onError={(message) => setError(message)}
             />
           ) : selectedCampaign ? (
             <CampaignDetailView
               detail={selectedCampaign}
               backLabel={sourceBackLabel}
-              onBack={() => setSelectedCampaign(null)}
+              onBack={goBack}
               onEdit={() => { setEditingCampaign(selectedCampaign.campaign); setDialog("campaign"); }}
               onDelete={() => openDeletion({ entityType: "campaign", id: selectedCampaign.campaign.id, name: selectedCampaign.campaign.name })}
               onOpenCompany={(id) => void openCompany(id)}
               onNotify={notify}
-              onRefresh={() => void openCampaign(selectedCampaign.campaign.id)}
+              onRefresh={() => void loadCampaignDetail(selectedCampaign.campaign.id)}
               onError={(message) => setError(message)}
             />
           ) : selectedPosition ? (
@@ -954,9 +1038,9 @@ export default function App() {
               detail={selectedPosition}
               backLabel={sourceBackLabel}
               onNotify={notify}
-				onRefresh={() => void openPosition(selectedPosition.position.id)}
+              onRefresh={() => void loadPositionDetail(selectedPosition.position.id)}
 				onError={(message) => setError(message)}
-              onBack={() => setSelectedPosition(null)}
+              onBack={goBack}
               onEditPosition={() => {
                 setEditingPosition(selectedPosition.position);
                 setDialog("position");
@@ -968,6 +1052,8 @@ export default function App() {
                   name: selectedPosition.position.title,
                 })
               }
+              onOpenCompany={(id) => void openCompany(id)}
+              onOpenCampaign={(id) => void openCampaign(id)}
               onCreateApplication={() => {
                 setEditingApplication(null);
                 setDialog("application");
@@ -978,7 +1064,7 @@ export default function App() {
                   await api.addPositionAttachments(
                     selectedPosition.position.id,
                   );
-                  await openPosition(selectedPosition.position.id);
+                  await loadPositionDetail(selectedPosition.position.id);
                   notify("岗位附件已添加");
                 } catch (reason) {
                   setError(messageOf(reason));
@@ -994,7 +1080,7 @@ export default function App() {
                   confirmLabel: "确认删除附件",
                   action: async () => {
                     await api.deletePositionAttachment(attachment.id);
-                    await openPosition(selectedPosition.position.id);
+                    await loadPositionDetail(selectedPosition.position.id);
                     notify("岗位附件已删除");
                   },
                 });
@@ -1012,9 +1098,9 @@ export default function App() {
               detail={selectedApplication}
               backLabel={sourceBackLabel}
 				onNotify={notify}
-				onRefresh={() => void openApplication(selectedApplication.application.id)}
+              onRefresh={() => void loadApplicationDetail(selectedApplication.application.id)}
 				onError={(message) => setError(message)}
-			  onOpenResume={async (resumeID) => {
+              onOpenResume={async (resumeID) => {
                 try {
 				  await api.openResume(resumeID);
                 } catch (reason) {
@@ -1037,13 +1123,15 @@ export default function App() {
                       } else {
                         await api.deleteApplicationResume(selectedApplication.application.id);
                       }
-                      await openApplication(selectedApplication.application.id);
+                      await loadApplicationDetail(selectedApplication.application.id);
                       await load();
                       notify("已清除投递简历关联");
                     },
                   });
 				}}
-              onBack={() => setSelectedApplication(null)}
+              onBack={goBack}
+              onOpenCompany={(id) => void openCompany(id)}
+              onOpenCampaign={(id) => void openCampaign(id)}
               onOpenPosition={(id) => void openPosition(id)}
               onEditApplication={() => {
                 setEditingApplication(selectedApplication.application);
@@ -1075,7 +1163,7 @@ export default function App() {
                   confirmLabel: "确认删除节点",
                   action: async () => {
                     await api.deleteStage(stage.id);
-                    await openApplication(selectedApplication.application.id);
+                    await loadApplicationDetail(selectedApplication.application.id);
                     notify("流程节点已删除");
                   },
                 });
@@ -1091,7 +1179,7 @@ export default function App() {
                     selectedApplication.application.id,
                     next.map((item) => item.id),
                   );
-                  await openApplication(selectedApplication.application.id);
+                  await loadApplicationDetail(selectedApplication.application.id);
                 } catch (reason) {
                   setError(messageOf(reason));
                 }
@@ -1101,7 +1189,7 @@ export default function App() {
             <DashboardView
               dashboard={dashboard}
               onOpenApplications={openApplicationStatistics}
-              onOpenTodos={() => setView("todos")}
+              onOpenTodos={() => navigateToModule("todos")}
               onQuickCapture={() => openNew("quick-position")}
             />
           ) : view === "positions" ? (
@@ -1169,14 +1257,12 @@ export default function App() {
 						}
 					}}
 					onOpenApplications={(resumeID) => {
-						setSelectedPosition(null);
-						setSelectedApplication(null);
+						navigateToModule("applications");
 						setApplicationFilter("all");
 						setApplicationStageType("");
 						setApplicationStageStatus("");
 						setApplicationResumeID(resumeID);
 						setApplicationPage(1);
-						setView("applications");
 					}}
 					onEdit={(item) => {
 						setEditingResume(item);
@@ -1286,7 +1372,7 @@ export default function App() {
             onSaved={async () => {
               const positionID = selectedPosition?.position.id;
               await refresh("岗位已保存");
-              if (positionID) await openPosition(positionID);
+              if (positionID) await loadPositionDetail(positionID);
             }}
           />
         )}
@@ -1317,18 +1403,16 @@ export default function App() {
                 null
               }
               onClose={() => setDialog(null)}
-				onManageResumes={() => {
+					onManageResumes={() => {
 					setDialog(null);
-					setSelectedPosition(null);
-					setSelectedApplication(null);
-					setView("resumes");
-				}}
+					navigateToModule("resumes");
+					}}
               onSaved={async () => {
                 const id = selectedPosition?.position.id;
                 const appID = selectedApplication?.application.id;
                 await refresh("投递记录已保存");
-                if (id) await openPosition(id);
-                if (appID) await openApplication(appID);
+                if (id) await loadPositionDetail(id);
+                if (appID) await loadApplicationDetail(appID);
               }}
             />
           )}
@@ -1355,8 +1439,8 @@ export default function App() {
                 const id = selectedPosition?.position.id;
                 const appID = selectedApplication?.application.id;
                 await refresh("流程节点已保存");
-                if (id) await openPosition(id);
-                if (appID) await openApplication(appID);
+                if (id) await loadPositionDetail(id);
+                if (appID) await loadApplicationDetail(appID);
               }}
             />
           )}
@@ -1406,8 +1490,8 @@ export default function App() {
             onRequestProtectedAction={setProtectedAction}
             onRestored={async (result) => {
               await load();
-              if (selectedPosition) await openPosition(selectedPosition.position.id);
-              if (selectedApplication) await openApplication(selectedApplication.application.id);
+              if (selectedPosition) await loadPositionDetail(selectedPosition.position.id);
+              if (selectedApplication) await loadApplicationDetail(selectedApplication.application.id);
               notify(
                 `已恢复 ${textDateTime(result.restoredBackup.createdAt)} 的备份；恢复前版本已自动留存`,
               );
@@ -4011,6 +4095,8 @@ function PositionDetailView({
 	onRefresh,
 	onError,
   onBack,
+  onOpenCompany,
+  onOpenCampaign,
   onEditPosition,
   onDeletePosition,
   onCreateApplication,
@@ -4025,6 +4111,8 @@ function PositionDetailView({
 	onRefresh: () => void;
 	onError: (message: string) => void;
   onBack: () => void;
+  onOpenCompany: (id: string) => void;
+  onOpenCampaign: (id: string) => void;
   onEditPosition: () => void;
   onDeletePosition: () => void;
   onCreateApplication: () => void;
@@ -4105,8 +4193,18 @@ function PositionDetailView({
             onClick={() => undefined}
           />
           <div className="detail-fields">
-            <Info label="公司" value={detail.company.name} />
-            <Info label="招聘批次" value={detail.campaign.name} />
+            <InternalDetailLink
+              label="公司"
+              value={detail.company.name}
+              icon={<Building2 size={13} />}
+              onClick={() => onOpenCompany(detail.company.id)}
+            />
+            <InternalDetailLink
+              label="招聘批次"
+              value={detail.campaign.name}
+              icon={<BriefcaseBusiness size={13} />}
+              onClick={() => onOpenCampaign(detail.campaign.id)}
+            />
             <Info label="开放日期" value={textDate(detail.campaign.opensOn)} />
             <Info label="截止日期" value={textDate(detail.campaign.closesOn)} />
             <Info
@@ -4562,6 +4660,8 @@ function ApplicationDetailView({
   onOpenResume,
 	onClearResume,
   onBack,
+  onOpenCompany,
+  onOpenCampaign,
   onOpenPosition,
   onEditApplication,
   onDeleteApplication,
@@ -4578,6 +4678,8 @@ function ApplicationDetailView({
   onOpenResume: (resumeID: string) => Promise<void>;
 	onClearResume: () => void;
   onBack: () => void;
+  onOpenCompany: (id: string) => void;
+  onOpenCampaign: (id: string) => void;
   onOpenPosition: (id: string) => void;
   onEditApplication: () => void;
   onDeleteApplication: () => void;
@@ -4623,11 +4725,15 @@ function ApplicationDetailView({
       <section className="panel application-context">
         <div>
           <span>所属公司</span>
-          <strong>{detail.company.name}</strong>
+          <button className="detail-context-link" onClick={() => onOpenCompany(detail.company.id)}>
+            <Building2 size={13} />{detail.company.name}<ArrowRight size={13} />
+          </button>
         </div>
         <div>
           <span>招聘批次</span>
-          <strong>{detail.campaign.name}</strong>
+          <button className="detail-context-link" onClick={() => onOpenCampaign(detail.campaign.id)}>
+            <BriefcaseBusiness size={13} />{detail.campaign.name}<ArrowRight size={13} />
+          </button>
         </div>
         <div>
           <span>岗位</span>
@@ -4882,6 +4988,29 @@ function TimelineStageResources({
           />
         </div>
       )}
+    </div>
+  );
+}
+
+function InternalDetailLink({
+  label,
+  value,
+  icon,
+  onClick,
+}: {
+  label: string;
+  value: string;
+  icon: ReactNode;
+  onClick: () => void;
+}) {
+  return (
+    <div className="detail-info-item">
+      <span className="detail-info-label">{label}</span>
+      <button className="internal-detail-link" type="button" onClick={onClick} title={`查看${value}详情`}>
+        <span className="internal-detail-link-icon">{icon}</span>
+        <strong>{value}</strong>
+        <ArrowRight size={13} aria-hidden="true" />
+      </button>
     </div>
   );
 }

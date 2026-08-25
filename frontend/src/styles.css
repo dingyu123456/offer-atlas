@@ -301,6 +301,17 @@ h2 { margin-bottom: 0; color: var(--ink); font-size: 14px; line-height: 1.3; }
 .application-resume-picker .icon-button { flex: 0 0 auto; }
 .link-button { display: inline-flex; align-items: center; gap: 5px; overflow: hidden; padding: 0; border: 0; color: var(--teal); background: transparent; font-size: 12px; font-weight: 650; text-align: left; }
 .link-button:hover { color: #075e56; text-decoration: underline; }
+.internal-detail-link { min-width: 0; display: inline-flex; align-items: center; gap: 5px; width: fit-content; max-width: 100%; margin-top: 5px; padding: 0; border: 0; border-radius: 0; color: #176c65; background: transparent; font-size: 12px; font-weight: 750; text-align: left; transition: color .16s ease; }
+.internal-detail-link strong, .detail-context-link { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.detail-fields .internal-detail-link strong { display: block; margin-top: 0; color: inherit; font-size: inherit; }
+.internal-detail-link svg:last-child, .detail-context-link svg:last-child { flex: 0 0 auto; }
+.internal-detail-link-icon { display: inline-flex; flex: 0 0 auto; color: #4b9584; }
+.internal-detail-link:hover { color: #075e56; text-decoration: underline; text-underline-offset: 3px; }
+.internal-detail-link:focus-visible, .detail-context-link:focus-visible { outline: 2px solid #6cb9a3; outline-offset: 2px; }
+.detail-context-link { min-width: 0; display: inline-flex; align-items: center; gap: 6px; width: fit-content; max-width: 100%; padding: 6px 8px; border: 1px solid #d4e8df; border-radius: 6px; color: #176c65; background: #f6fbf8; font-size: 12px; font-weight: 750; text-align: left; transition: border-color .16s ease, background .16s ease, color .16s ease; }
+.detail-context-link:hover { border-color: #82bca9; color: #075e56; background: #eaf7f1; }
+.application-context .detail-context-link { padding: 0; border: 0; border-radius: 0; background: transparent; }
+.application-context .detail-context-link:hover { color: #075e56; background: transparent; text-decoration: underline; }
 .detail-notes { margin-bottom: 16px; padding: 18px 20px; }
 .detail-notes p { margin: 7px 0 0; color: #63746e; font-size: 11px; line-height: 1.65; white-space: pre-wrap; }
 .detail-info-item { min-width: 0; }
