@@ -3890,33 +3890,58 @@ function RelatedLinksFormField({ links, onChange }: { links: ResourceLinkInput[]
 }
 
 function StagedSupplementalAttachmentsField({
+	label = "补充资料",
+	description = "保存后会自动上传；支持截图、公告、邮件或其他参考文件。",
   files,
   onChange,
   disabled,
+	onError,
 }: {
+	label?: string;
+	description?: string;
   files: File[];
   onChange: (files: File[]) => void;
   disabled?: boolean;
+	onError?: (message: string) => void;
 }) {
   const inputRef = useRef<HTMLInputElement>(null);
   const [pasteActive, setPasteActive] = useState(false);
+  const [pasteFeedback, setPasteFeedback] = useState<{
+    tone: "success" | "error";
+    text: string;
+  } | null>(null);
+  useEffect(() => {
+    if (!pasteFeedback) return;
+    const timer = window.setTimeout(() => setPasteFeedback(null), pasteFeedbackMilliseconds);
+    return () => window.clearTimeout(timer);
+  }, [pasteFeedback]);
   const add = (incoming: Iterable<File>) => {
     const added = Array.from(incoming);
     const tooLarge = added.find((item) => item.size > maxStagedAttachmentBytes);
-    if (tooLarge) return;
+    if (tooLarge) {
+		onError?.(`“${tooLarge.name}”超过 25 MB，暂不支持上传。`);
+		return false;
+	}
     onChange([...files, ...added]);
+	return true;
   };
   const paste = (event: ClipboardEvent<HTMLDivElement>) => {
     const image = Array.from(event.clipboardData.files).find((item) => attachmentIsClipboardImage(item.type));
-    if (!image) return;
+    if (!image) {
+		event.preventDefault();
+		setPasteFeedback({ tone: "error", text: "未检测到图片" });
+		return;
+	}
     event.preventDefault();
-    add([new File([image], clipboardImageName(image.type), { type: image.type })]);
+    if (add([new File([image], clipboardImageName(image.type), { type: image.type })])) {
+		setPasteFeedback({ tone: "success", text: "已添加" });
+	}
   };
-  return <Field wide label="补充资料">
+  return <Field wide label={label}>
     <div className="staged-resource-attachments">
-      <span>保存后会自动上传；支持截图、公告、邮件或其他参考文件。</span>
+      <span>{description}</span>
       <input ref={inputRef} className="quick-capture-file-input" type="file" multiple disabled={disabled} onChange={(event) => { add(event.target.files || []); event.target.value = ""; }} />
-      <div className="staged-resource-actions"><button type="button" className="secondary-button compact-button" disabled={disabled} onClick={() => inputRef.current?.click()}><ImagePlus size={14} />选择图片或文件</button><div className={`quick-paste-zone compact ${pasteActive ? "is-active" : ""}`} role="button" tabIndex={0} onMouseEnter={(event) => event.currentTarget.focus()} onMouseLeave={(event) => { if (document.activeElement === event.currentTarget) event.currentTarget.blur(); }} onFocus={() => setPasteActive(true)} onBlur={() => setPasteActive(false)} onPaste={paste}><ClipboardPaste size={15} /><span>移至此处后 Ctrl+V 粘贴截图</span><kbd>Ctrl+V</kbd></div></div>
+      <div className="staged-resource-actions"><button type="button" className="secondary-button compact-button" disabled={disabled} onClick={() => inputRef.current?.click()}><ImagePlus size={14} />选择图片或文件</button><div className={`quick-paste-zone compact ${pasteActive ? "is-active" : ""}`} role="button" tabIndex={0} onMouseEnter={(event) => event.currentTarget.focus()} onMouseLeave={(event) => { if (document.activeElement === event.currentTarget) event.currentTarget.blur(); }} onFocus={() => setPasteActive(true)} onBlur={() => setPasteActive(false)} onPaste={paste}><ClipboardPaste size={15} /><span>移至此处后 Ctrl+V 粘贴截图</span>{pasteFeedback ? <span className={`attachment-paste-feedback ${pasteFeedback.tone}`} role="status">{pasteFeedback.tone === "success" ? <CheckCircle2 size={12} /> : <CircleAlert size={12} />}{pasteFeedback.text}</span> : <kbd>Ctrl+V</kbd>}</div></div>
       {files.length > 0 && <div className="quick-attachment-list">{files.map((file, index) => <QuickCaptureAttachmentRow file={file} key={`${file.name}-${file.size}-${file.lastModified}-${index}`} disabled={Boolean(disabled)} onRemove={() => onChange(files.filter((_, itemIndex) => itemIndex !== index))} />)}</div>}
     </div>
   </Field>;
@@ -3998,6 +4023,15 @@ function SupplementalAttachmentsPanel({
   const [loadingID, setLoadingID] = useState("");
   const [pasting, setPasting] = useState(false);
   const [pasteActive, setPasteActive] = useState(false);
+  const [pasteFeedback, setPasteFeedback] = useState<{
+    tone: "success" | "error";
+    text: string;
+  } | null>(null);
+  useEffect(() => {
+    if (!pasteFeedback) return;
+    const timer = window.setTimeout(() => setPasteFeedback(null), pasteFeedbackMilliseconds);
+    return () => window.clearTimeout(timer);
+  }, [pasteFeedback]);
   const inputRef = useRef<HTMLInputElement>(null);
   const images = items.filter(attachmentIsImage);
   const files = items.filter((item) => !attachmentIsImage(item));
@@ -4014,13 +4048,20 @@ function SupplementalAttachmentsPanel({
   };
   const receivePaste = (event: ClipboardEvent<HTMLDivElement>) => {
     const image = Array.from(event.clipboardData.files).find((file) => attachmentIsClipboardImage(file.type));
-    if (!image || pasting) { if (!image) onError("剪贴板中没有图片，请复制截图后重试。"); return; }
+    if (!image || pasting) {
+      if (!image) {
+        event.preventDefault();
+        setPasteFeedback({ tone: "error", text: "未检测到图片" });
+      }
+      return;
+    }
     event.preventDefault();
     setPasting(true);
     void (async () => {
       try {
         await api.pasteSupplementalImage(ownerType, ownerID, clipboardImageName(image.type), await fileDataURL(image));
         onChanged();
+        setPasteFeedback({ tone: "success", text: "已添加" });
         onNotify("截图已添加");
       } catch (reason) {
         onError(messageOf(reason));
@@ -4044,7 +4085,7 @@ function SupplementalAttachmentsPanel({
       <div className="panel-header attachment-header"><div><h2>补充资料</h2><span>{items.length ? `${items.length} 个文件` : "截图、公告、邮件或其他参考文件"}</span></div><button type="button" className="secondary-button attachment-add-button" onClick={() => inputRef.current?.click()}><ImagePlus size={16} />添加资料</button></div>
       <input ref={inputRef} className="quick-capture-file-input" type="file" multiple onChange={(event) => { void upload(event.target.files || []); event.target.value = ""; }} />
       <div className={`attachment-paste-zone ${pasteActive ? "is-active" : ""}`} role="button" tabIndex={0} onMouseEnter={(event) => event.currentTarget.focus()} onMouseLeave={(event) => { if (document.activeElement === event.currentTarget) event.currentTarget.blur(); }} onFocus={() => setPasteActive(true)} onBlur={() => setPasteActive(false)} onPaste={receivePaste}>
-        <ClipboardPaste size={17} /><div><strong>{pasting ? "正在保存截图" : "粘贴截图"}</strong><span>将鼠标移至此区域后按 Ctrl+V；页面其他位置不会接收粘贴</span></div><kbd>Ctrl+V</kbd>
+        <ClipboardPaste size={17} /><div><strong>{pasting ? "正在保存截图" : "粘贴截图"}</strong><span>将鼠标移至此区域后按 Ctrl+V；页面其他位置不会接收粘贴</span></div>{pasteFeedback ? <span className={`attachment-paste-feedback ${pasteFeedback.tone}`} role="status">{pasteFeedback.tone === "success" ? <CheckCircle2 size={13} /> : <CircleAlert size={13} />}{pasteFeedback.text}</span> : <kbd>Ctrl+V</kbd>}
       </div>
       {!items.length ? <div className="attachment-empty"><ImagePlus size={20} /><span>暂未添加补充资料</span><small>图片会在这里展示缩略图，其他文件可直接打开。</small></div> : <div className="attachment-body">
         {images.length > 0 && <div className="attachment-gallery">{images.map((item) => <article className="attachment-image-card" key={item.id}><button type="button" className="attachment-image-preview" onClick={() => void showPreview(item)} disabled={loadingID === item.id}><ResourceAttachmentThumbnail item={item} /><span>{loadingID === item.id ? "加载预览" : "查看图片"}</span></button><div><strong title={item.originalName}>{item.originalName}</strong><small>{attachmentSize(item.sizeBytes)} · {textDate(item.createdAt)}</small></div><div className="attachment-actions"><button className="icon-button small" title="用默认程序打开" onClick={() => void api.openSupplementalAttachment(item.id).catch((reason) => onError(messageOf(reason)))}><ExternalLink size={14} /></button><button className="icon-button small danger-button" title="删除资料" onClick={() => remove(item)}><Trash2 size={14} /></button></div></article>)}</div>}
@@ -4307,7 +4348,15 @@ function PositionAttachmentsPanel({
   const [previewError, setPreviewError] = useState("");
   const [pasting, setPasting] = useState(false);
   const [pasteTargetActive, setPasteTargetActive] = useState(false);
-  const [pasteMessage, setPasteMessage] = useState("");
+  const [pasteFeedback, setPasteFeedback] = useState<{
+    tone: "success" | "error";
+    text: string;
+  } | null>(null);
+  useEffect(() => {
+    if (!pasteFeedback) return;
+    const timer = window.setTimeout(() => setPasteFeedback(null), pasteFeedbackMilliseconds);
+    return () => window.clearTimeout(timer);
+  }, [pasteFeedback]);
   useEffect(() => {
     setDisplayedItems(items);
   }, [items]);
@@ -4329,12 +4378,12 @@ function PositionAttachmentsPanel({
   };
   const pasteImage = async (image: File) => {
     if (!attachmentIsClipboardImage(image.type)) {
-      setPreviewError("剪贴板中没有可保存的图片");
+      setPasteFeedback({ tone: "error", text: "未检测到图片" });
       return;
     }
     setPasting(true);
     setPreviewError("");
-    setPasteMessage("");
+    setPasteFeedback(null);
     try {
       const attachments = await api.pastePositionImage(
         positionID,
@@ -4342,7 +4391,7 @@ function PositionAttachmentsPanel({
         await fileDataURL(image),
       );
       setDisplayedItems(attachments);
-      setPasteMessage("截图已添加");
+      setPasteFeedback({ tone: "success", text: "已添加" });
     } catch (reason) {
       setPreviewError(messageOf(reason));
     } finally {
@@ -4355,7 +4404,8 @@ function PositionAttachmentsPanel({
       attachmentIsClipboardImage(file.type),
     );
     if (!image) {
-      setPreviewError("剪贴板中没有图片，请复制截图后重试");
+      event.preventDefault();
+      setPasteFeedback({ tone: "error", text: "未检测到图片" });
       return;
     }
     event.preventDefault();
@@ -4383,7 +4433,6 @@ function PositionAttachmentsPanel({
         </div>
       </div>
       {previewError && <p className="attachment-error">{previewError}</p>}
-      {pasteMessage && <p className="attachment-feedback">{pasteMessage}</p>}
       <div
         className={`attachment-paste-zone ${pasteTargetActive ? "is-active" : ""}`}
         role="button"
@@ -4404,7 +4453,18 @@ function PositionAttachmentsPanel({
           <strong>{pasting ? "正在保存截图" : "粘贴截图"}</strong>
           <span>将鼠标移至此区域后按 Ctrl+V；页面其他位置不会接收粘贴</span>
         </div>
-        <kbd>Ctrl+V</kbd>
+        {pasteFeedback ? (
+          <span
+            className={`attachment-paste-feedback ${pasteFeedback.tone}`}
+            role="status"
+            title={pasteFeedback.tone === "error" ? "请先复制截图，再在此处粘贴" : "截图已添加"}
+          >
+            {pasteFeedback.tone === "success" ? <CheckCircle2 size={13} /> : <CircleAlert size={13} />}
+            {pasteFeedback.text}
+          </span>
+        ) : (
+          <kbd>Ctrl+V</kbd>
+        )}
       </div>
       {!displayedItems.length ? (
         <div className="attachment-empty">
@@ -4509,6 +4569,7 @@ function clipboardImageName(mimeType: string) {
   return `截图-${timestamp}.${extension}`;
 }
 const maxStagedAttachmentBytes = 25 * 1024 * 1024;
+const pasteFeedbackMilliseconds = 1_200;
 function formatFileSize(size: number) {
   if (size < 1024 * 1024) return `${Math.max(1, Math.round(size / 1024))} KB`;
   return `${(size / (1024 * 1024)).toFixed(size >= 10 * 1024 * 1024 ? 0 : 1)} MB`;
@@ -5867,6 +5928,7 @@ function PositionDialog({
   );
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
+	const [pendingAttachments, setPendingAttachments] = useState<File[]>([]);
 	const [links, setLinks] = useState<ResourceLinkInput[]>([]);
 	useEffect(() => { if (!initial?.id) { setLinks([]); return; } void api.resourceLinks("position", initial.id).then(setLinks).catch((reason) => setError(messageOf(reason))); }, [initial?.id]);
   const companyCampaigns = campaigns.filter(
@@ -5883,10 +5945,28 @@ function PositionDialog({
     setError("");
     try {
 		const position = await api.savePosition({ ...form, priority });
+		if (!form.id) setForm((current) => ({ ...current, id: position.id }));
 		await api.saveResourceLinks("position", position.id, links);
+		for (const file of pendingAttachments) {
+			try {
+				await api.uploadPositionAttachment(
+					position.id,
+					file.name,
+					await fileDataURL(file),
+				);
+				setPendingAttachments((current) =>
+					current.filter((item) => item !== file),
+				);
+			} catch (reason) {
+				throw new Error(
+					`岗位信息已保存，但附件“${file.name}”上传失败：${messageOf(reason)}。请再次点击“保存岗位”重试剩余文件。`,
+				);
+			}
+		}
       onSaved();
     } catch (reason) {
       setError(messageOf(reason));
+	} finally {
       setSaving(false);
     }
   };
@@ -6011,6 +6091,14 @@ function PositionDialog({
           />
         </Field>
 		<RelatedLinksFormField links={links} onChange={setLinks} />
+		<StagedSupplementalAttachmentsField
+			label="岗位附件"
+			description="保存后会自动上传，可收录岗位 JD 截图、公告、文档或其他参考文件。"
+			files={pendingAttachments}
+			onChange={setPendingAttachments}
+			disabled={saving}
+			onError={setError}
+		/>
         <FormError value={error} />
         <Buttons onClose={onClose} saving={saving} label="保存岗位" />
       </form>
@@ -6053,6 +6141,10 @@ function QuickCapturePositionDialog({
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [pendingAttachments, setPendingAttachments] = useState<File[]>([]);
+	const [pasteFeedback, setPasteFeedback] = useState<{
+		tone: "success" | "error";
+		text: string;
+	} | null>(null);
 	const [companyLinks, setCompanyLinks] = useState<ResourceLinkInput[]>([]);
 	const [campaignLinks, setCampaignLinks] = useState<ResourceLinkInput[]>([]);
 	const [positionLinks, setPositionLinks] = useState<ResourceLinkInput[]>([]);
@@ -6063,6 +6155,11 @@ function QuickCapturePositionDialog({
 	const [existingCampaignLinks, setExistingCampaignLinks] = useState<ResourceLink[]>([]);
 	const [existingCampaignAttachments, setExistingCampaignAttachments] = useState<SupplementalAttachment[]>([]);
   const [createdPosition, setCreatedPosition] = useState<Position | null>(null);
+	useEffect(() => {
+		if (!pasteFeedback) return;
+		const timer = window.setTimeout(() => setPasteFeedback(null), pasteFeedbackMilliseconds);
+		return () => window.clearTimeout(timer);
+	}, [pasteFeedback]);
   const [uploadingName, setUploadingName] = useState("");
   const fileInputRef = useRef<HTMLInputElement>(null);
   const matchingCompany = companies.find(
@@ -6232,10 +6329,11 @@ function QuickCapturePositionDialog({
     );
     if (oversized) {
       setError(`“${oversized.name}”超过 25 MB，快速收录暂不支持上传此文件。`);
-      return;
+		return false;
     }
     setError("");
     setPendingAttachments((current) => [...current, ...selected]);
+	return true;
   };
   const receivePaste = (event: ClipboardEvent<HTMLDivElement>) => {
     if (saving) return;
@@ -6243,13 +6341,16 @@ function QuickCapturePositionDialog({
       attachmentIsClipboardImage(file.type),
     );
     if (!image) {
-      setError("剪贴板中没有图片，请复制截图后重试。");
+		event.preventDefault();
+		setPasteFeedback({ tone: "error", text: "未检测到图片" });
       return;
     }
     event.preventDefault();
-    stageFiles([
+    if (stageFiles([
       new File([image], clipboardImageName(image.type), { type: image.type }),
-    ]);
+	])) {
+		setPasteFeedback({ tone: "success", text: "已添加" });
+	}
   };
   const submit = async (event: FormEvent) => {
     event.preventDefault();
@@ -6606,7 +6707,12 @@ function QuickCapturePositionDialog({
                 <strong>粘贴截图</strong>
                 <span>将鼠标移至此处后按 Ctrl+V；页面其他位置不会接收粘贴</span>
               </div>
-              <kbd>Ctrl+V</kbd>
+			  {pasteFeedback ? (
+				<span className={`attachment-paste-feedback ${pasteFeedback.tone}`} role="status">
+				  {pasteFeedback.tone === "success" ? <CheckCircle2 size={13} /> : <CircleAlert size={13} />}
+				  {pasteFeedback.text}
+				</span>
+			  ) : <kbd>Ctrl+V</kbd>}
             </div>
           </div>
           {pendingAttachments.length > 0 && (

@@ -37,7 +37,7 @@ const (
 // buildVersion is intentionally a variable so release builds can override it
 // with -ldflags. The checked-in value is also the version shown in development
 // builds and in the update dialog.
-var buildVersion = "0.3.5"
+var buildVersion = "0.3.6"
 
 // AppUpdate is a user-facing snapshot. It contains no credential or business
 // data and can safely be exposed to the Wails frontend.

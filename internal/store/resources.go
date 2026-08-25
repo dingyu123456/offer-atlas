@@ -167,7 +167,7 @@ func (s *Store) ListSupplementalAttachments(ownerType domain.ResourceOwnerType, 
 func (s *Store) listSupplementalAttachments(ownerType domain.ResourceOwnerType, ownerID string) ([]domain.SupplementalAttachment, error) {
 	rows, err := s.db.Query(`
 		SELECT id, owner_type, owner_id, original_name, stored_name, mime_type, size_bytes, created_at
-		FROM supplemental_attachments WHERE owner_type=? AND owner_id=? ORDER BY created_at DESC, id DESC
+		FROM supplemental_attachments WHERE owner_type=? AND owner_id=? ORDER BY created_at ASC, id ASC
 	`, ownerType, ownerID)
 	if err != nil {
 		return nil, err

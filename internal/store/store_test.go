@@ -311,6 +311,52 @@ func TestPastedPositionImageIsStoredAsAttachment(t *testing.T) {
 	}
 }
 
+func TestAttachmentListsFollowAddedOrder(t *testing.T) {
+	fixture := newDeletionFixture(t)
+	earlier := datetimeString(time.Date(2026, time.August, 25, 10, 0, 0, 0, time.UTC))
+	later := datetimeString(time.Date(2026, time.August, 25, 10, 1, 0, 0, time.UTC))
+
+	for _, item := range []struct {
+		id        string
+		name      string
+		createdAt string
+	}{
+		{id: "position-later", name: "later.png", createdAt: later},
+		{id: "position-earlier", name: "earlier.png", createdAt: earlier},
+	} {
+		if _, err := fixture.store.db.Exec(`
+			INSERT INTO position_attachments(id, position_id, original_name, stored_name, mime_type, size_bytes, created_at)
+			VALUES (?, ?, ?, ?, 'image/png', 1, ?)
+		`, item.id, fixture.position.ID, item.name, item.name, item.createdAt); err != nil {
+			t.Fatalf("insert position attachment: %v", err)
+		}
+	}
+	positionAttachments, err := fixture.store.ListPositionAttachments(fixture.position.ID)
+	if err != nil || len(positionAttachments) != 2 || positionAttachments[0].ID != "position-earlier" || positionAttachments[1].ID != "position-later" {
+		t.Fatalf("position attachments must follow added order: %#v, %v", positionAttachments, err)
+	}
+
+	for _, item := range []struct {
+		id        string
+		name      string
+		createdAt string
+	}{
+		{id: "resource-later", name: "later.png", createdAt: later},
+		{id: "resource-earlier", name: "earlier.png", createdAt: earlier},
+	} {
+		if _, err := fixture.store.db.Exec(`
+			INSERT INTO supplemental_attachments(id, owner_type, owner_id, original_name, stored_name, mime_type, size_bytes, created_at)
+			VALUES (?, 'application', ?, ?, ?, 'image/png', 1, ?)
+		`, item.id, fixture.application.ID, item.name, item.name, item.createdAt); err != nil {
+			t.Fatalf("insert supplemental attachment: %v", err)
+		}
+	}
+	resourceAttachments, err := fixture.store.ListSupplementalAttachments(domain.ResourceOwnerApplication, fixture.application.ID)
+	if err != nil || len(resourceAttachments) != 2 || resourceAttachments[0].ID != "resource-earlier" || resourceAttachments[1].ID != "resource-later" {
+		t.Fatalf("supplemental attachments must follow added order: %#v, %v", resourceAttachments, err)
+	}
+}
+
 func TestUploadedPositionAttachmentDataIsStoredAndMirrored(t *testing.T) {
 	fixture := newDeletionFixture(t)
 	contents := []byte("position reference")

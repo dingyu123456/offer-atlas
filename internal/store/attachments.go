@@ -87,7 +87,7 @@ func (s *Store) ListPositionAttachments(positionID string) ([]domain.PositionAtt
 func (s *Store) listPositionAttachments(positionID string) ([]domain.PositionAttachment, error) {
 	rows, err := s.db.Query(`
 		SELECT id, position_id, original_name, stored_name, mime_type, size_bytes, created_at
-		FROM position_attachments WHERE position_id=? ORDER BY created_at DESC, id DESC
+		FROM position_attachments WHERE position_id=? ORDER BY created_at ASC, id ASC
 	`, positionID)
 	if err != nil {
 		return nil, err
