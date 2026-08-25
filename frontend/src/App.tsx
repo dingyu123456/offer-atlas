@@ -1981,6 +1981,13 @@ function PositionFilterPopover({
   onApply: (status: string) => void;
 }) {
   const [nextStatus, setNextStatus] = useState(status);
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [onClose]);
   return (
     <div
       className="toolbar-popover filter-popover"
@@ -1988,8 +1995,13 @@ function PositionFilterPopover({
       aria-label="筛选岗位"
     >
       <div className="toolbar-popover-heading">
-        <strong>筛选岗位</strong>
-        <span>按投递状态定位岗位</span>
+        <div className="toolbar-popover-heading-copy">
+          <strong>筛选岗位</strong>
+          <span>按投递状态定位岗位</span>
+        </div>
+        <button type="button" className="toolbar-popover-close" title="关闭筛选" aria-label="关闭筛选" onClick={onClose}>
+          <X size={14} />
+        </button>
       </div>
       <div className="toolbar-popover-section">
         <span>投递状态</span>
@@ -2061,6 +2073,13 @@ function ApplicationFilterPopover({
   const [nextType, setNextType] = useState(stageType);
   const [nextStageStatus, setNextStageStatus] = useState(stageStatus);
   const [nextResumeID, setNextResumeID] = useState(resumeID);
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [onClose]);
   const systemTypes = stageTypes.filter((item) => item.system);
   const customTypes = stageTypes.filter((item) => !item.system);
   return (
@@ -2070,10 +2089,15 @@ function ApplicationFilterPopover({
       aria-label="筛选投递记录"
     >
       <div className="toolbar-popover-heading">
-        <strong>筛选投递记录</strong>
-        <span className="popover-heading-with-help">
-          组合投递结果与流程条件 <ApplicationFilterHelp />
-        </span>
+        <div className="toolbar-popover-heading-copy">
+          <strong>筛选投递记录</strong>
+          <span className="popover-heading-with-help">
+            组合投递结果与流程条件 <ApplicationFilterHelp />
+          </span>
+        </div>
+        <button type="button" className="toolbar-popover-close" title="关闭筛选" aria-label="关闭筛选" onClick={onClose}>
+          <X size={14} />
+        </button>
       </div>
       <div className="toolbar-popover-section">
         <span className="popover-heading-with-help">
@@ -3963,7 +3987,7 @@ function CompanyDetailView({ detail, backLabel, onBack, onEdit, onDelete, onOpen
     <section className="panel detail-notes"><Info label="招聘官网" value={detail.company.homepage || "未设置"} link={detail.company.homepage} onNotify={onNotify} /><span>公司备注</span><p>{detail.company.notes || "暂无公司备注"}</p></section>
     <ResourceLinksPanel ownerType="company" ownerID={detail.company.id} links={detail.links} onChanged={onRefresh} onError={onError} onNotify={onNotify} />
     <SupplementalAttachmentsPanel ownerType="company" ownerID={detail.company.id} items={detail.attachments} onChanged={onRefresh} onError={onError} onNotify={onNotify} />
-    <section className="panel company-campaign-summary"><div className="panel-header"><div><h2>招聘批次</h2><span>已关联 {detail.campaignCount} 个招聘批次</span></div></div>{detail.campaigns.length ? <div className="company-detail-campaign-list">{detail.campaigns.map((campaign) => <button type="button" key={campaign.id} onClick={() => onOpenCampaign(campaign.id)}><span><strong>{campaign.name}</strong><small>{campaign.processOverview || "尚未记录官方流程参考"}</small></span><ArrowRight size={15} /></button>)}</div> : <Empty text="尚未建立招聘批次" />}</section>
+    <section className="panel company-campaign-summary"><div className="panel-header company-campaign-header"><div><h2>招聘批次</h2><span>已关联 {detail.campaignCount} 个招聘批次</span></div></div>{detail.campaigns.length ? <div className="company-detail-campaign-list">{detail.campaigns.map((campaign) => <button type="button" key={campaign.id} onClick={() => onOpenCampaign(campaign.id)}><span><strong>{campaign.name}</strong><small>{campaign.processOverview || "尚未记录官方流程参考"}</small></span><ArrowRight size={15} /></button>)}</div> : <Empty text="尚未建立招聘批次" />}</section>
   </div>;
 }
 
@@ -4894,8 +4918,8 @@ function Info({
     BrowserOpenURL(externalURL);
   };
   return (
-    <div>
-      <span>{label}</span>
+    <div className="detail-info-item">
+      <span className="detail-info-label">{label}</span>
       {externalURL ? (
         <div className="detail-link-value">
           <button
@@ -4918,7 +4942,7 @@ function Info({
           </button>
         </div>
       ) : (
-        <strong title={value}>{value}</strong>
+        <strong className="detail-info-value" title={value}>{value}</strong>
       )}
     </div>
   );
