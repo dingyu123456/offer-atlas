@@ -337,7 +337,7 @@ func (s *Store) ListPositionPage(filter domain.PositionFilter) (domain.PositionP
 	}
 	pageSize := filter.PageSize
 	if pageSize == 0 {
-		pageSize = 20
+		pageSize = 50
 	}
 	if pageSize < 1 || pageSize > 100 {
 		return domain.PositionPage{}, errors.New("page size must be between 1 and 100")
@@ -391,7 +391,7 @@ func (s *Store) ListApplications(filter domain.ApplicationFilter) (domain.Applic
 	}
 	pageSize := filter.PageSize
 	if pageSize == 0 {
-		pageSize = 20
+		pageSize = 50
 	}
 	if pageSize < 1 || pageSize > 100 {
 		return domain.ApplicationPage{}, errors.New("page size must be between 1 and 100")

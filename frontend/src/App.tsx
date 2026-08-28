@@ -24,6 +24,8 @@ import {
   ChevronDown,
   ChevronLeft,
   ChevronRight,
+  ChevronsLeft,
+  ChevronsRight,
   CircleAlert,
   CircleHelp,
   CirclePlus,
@@ -335,6 +337,7 @@ const inputDateTime = (value?: string) => {
     .toISOString()
     .slice(0, 16);
 };
+const desktopListPageSize = 50;
 
 export default function App() {
   const [view, setView] = useState<View>("dashboard");
@@ -353,13 +356,13 @@ export default function App() {
   const [positions, setPositions] = useState<PositionPage>({
     items: [],
     page: 1,
-    pageSize: 20,
+    pageSize: desktopListPageSize,
     total: 0,
   });
   const [applications, setApplications] = useState<ApplicationPage>({
     items: [],
     page: 1,
-    pageSize: 20,
+    pageSize: desktopListPageSize,
     total: 0,
   });
 	const [resumes, setResumes] = useState<Resume[]>([]);
@@ -482,7 +485,14 @@ export default function App() {
     sortOrder = positionSortOrder,
   ) =>
     setPositions(
-      await api.positions(status, query, positionPage, 20, sortBy, sortOrder),
+      await api.positions(
+        status,
+        query,
+        positionPage,
+        desktopListPageSize,
+        sortBy,
+        sortOrder,
+      ),
     );
   const loadApplications = async (
     query = "",
@@ -498,7 +508,7 @@ export default function App() {
         status,
         query,
         page: applicationPage,
-        pageSize: 20,
+        pageSize: desktopListPageSize,
         sortBy,
         sortOrder,
         stageType,
@@ -2323,7 +2333,6 @@ function PositionsView({
   onQuickCapture: () => void;
 }) {
   const typeLabel = useStageTypeLabel();
-  const totalPages = Math.max(1, Math.ceil(page.total / page.pageSize));
   const [openMenu, setOpenMenu] = useState<"filter" | null>(null);
   return (
     <div className="page-content">
@@ -2495,27 +2504,12 @@ function PositionsView({
         ) : (
           <Empty text="还没有符合条件的岗位。" />
         )}
-        <div className="pagination">
-          <button
-            className="icon-button small"
-            disabled={page.page <= 1}
-            onClick={() => onPage(page.page - 1)}
-            title="上一页"
-          >
-            <ArrowLeft size={15} />
-          </button>
-          <span>
-            第 {page.page} / {totalPages} 页
-          </span>
-          <button
-            className="icon-button small"
-            disabled={page.page >= totalPages}
-            onClick={() => onPage(page.page + 1)}
-            title="下一页"
-          >
-            <ArrowRight size={15} />
-          </button>
-        </div>
+        <ListPagination
+          page={page.page}
+          pageSize={page.pageSize}
+          total={page.total}
+          onPage={onPage}
+        />
       </section>
     </div>
   );
@@ -2555,7 +2549,6 @@ function ApplicationsView({
   onPage: (value: number) => void;
   onSelect: (id: string) => void;
 }) {
-  const totalPages = Math.max(1, Math.ceil(page.total / page.pageSize));
   const columnStyle = applicationColumnStyle(page.items);
   const [openMenu, setOpenMenu] = useState<"filter" | null>(null);
   const activeFilterCount =
@@ -2717,68 +2710,134 @@ function ApplicationsView({
         ) : (
           <Empty text="还没有符合条件的投递记录。" />
         )}
-        <div className="pagination">
-          <button
-            className="icon-button small"
-            disabled={page.page <= 1}
-            onClick={() => onPage(page.page - 1)}
-            title="上一页"
-          >
-            <ArrowLeft size={15} />
-          </button>
-          <span>
-            第 {page.page} / {totalPages} 页
-          </span>
-          <button
-            className="icon-button small"
-            disabled={page.page >= totalPages}
-            onClick={() => onPage(page.page + 1)}
-            title="下一页"
-          >
-            <ArrowRight size={15} />
-          </button>
-        </div>
+        <ListPagination
+          page={page.page}
+          pageSize={page.pageSize}
+          total={page.total}
+          onPage={onPage}
+        />
       </section>
     </div>
   );
 }
 
-function SearchPager({
+function ListPagination({
   page,
   pageSize,
   total,
   onPage,
+  className = "",
 }: {
   page: number;
   pageSize: number;
   total: number;
   onPage: (page: number) => void;
+  className?: string;
 }) {
   const totalPages = Math.max(1, Math.ceil(total / pageSize));
-  if (totalPages <= 1) return null;
+  if (total <= 0) return null;
+  const start = (page - 1) * pageSize + 1;
+  const end = Math.min(page * pageSize, total);
+  const shownPages = paginationPageNumbers(totalPages, page);
   return (
-    <div className="search-pager">
-      <button
-        className="icon-button small"
-        disabled={page <= 1}
-        title="上一页"
-        onClick={() => onPage(page - 1)}
-      >
-        <ArrowLeft size={15} />
-      </button>
-      <span>
-        第 {page} / {totalPages} 页
+    <div className={`list-pagination ${totalPages === 1 ? "is-single-page" : ""} ${className}`.trim()}>
+      <span className="list-pagination-summary" aria-label={`当前显示第 ${start} 至 ${end} 条，共 ${total} 条`}>
+        <small>当前显示</small>
+        <b>{start}–{end}</b>
+        <i aria-hidden="true" />
+        <span>共 {total} 条</span>
       </span>
-      <button
-        className="icon-button small"
-        disabled={page >= totalPages}
-        title="下一页"
-        onClick={() => onPage(page + 1)}
-      >
-        <ArrowRight size={15} />
-      </button>
+      {totalPages === 1 ? (
+        <span className="list-pagination-complete">
+          <i><CheckCircle2 size={13} aria-hidden="true" /></i>
+          <span>
+            <b>已显示全部</b>
+            <small>共 1 页</small>
+          </span>
+        </span>
+      ) : (
+        <nav className="list-pagination-controls" aria-label={`分页导航，共 ${total} 条，当前显示第 ${start} 至 ${end} 条`}>
+          <span className="list-pagination-page-note">第 <b>{page}</b> / {totalPages} 页</span>
+          <button
+            type="button"
+            className="list-pagination-icon"
+            disabled={page <= 1}
+            title="首页"
+            aria-label="首页"
+            onClick={() => onPage(1)}
+          >
+            <ChevronsLeft size={15} />
+          </button>
+          <button
+            type="button"
+            className="list-pagination-icon"
+            disabled={page <= 1}
+            title="上一页"
+            aria-label="上一页"
+            onClick={() => onPage(page - 1)}
+          >
+            <ChevronLeft size={15} />
+          </button>
+          <span className="list-pagination-pages">
+            {shownPages.map((shownPage, index) =>
+              shownPage === "ellipsis" ? (
+                <span className="list-pagination-ellipsis" key={`ellipsis-${index}`} aria-hidden="true">
+                  …
+                </span>
+              ) : (
+                <button
+                  type="button"
+                  className={`list-pagination-page ${shownPage === page ? "current" : ""}`}
+                  key={shownPage}
+                  aria-current={shownPage === page ? "page" : undefined}
+                  aria-label={`第 ${shownPage} 页`}
+                  onClick={() => onPage(shownPage)}
+                >
+                  {shownPage}
+                </button>
+              ),
+            )}
+          </span>
+          <button
+            type="button"
+            className="list-pagination-icon"
+            disabled={page >= totalPages}
+            title="下一页"
+            aria-label="下一页"
+            onClick={() => onPage(page + 1)}
+          >
+            <ChevronRight size={15} />
+          </button>
+          <button
+            type="button"
+            className="list-pagination-icon"
+            disabled={page >= totalPages}
+            title="末页"
+            aria-label="末页"
+            onClick={() => onPage(totalPages)}
+          >
+            <ChevronsRight size={15} />
+          </button>
+        </nav>
+      )}
     </div>
   );
+}
+
+function paginationPageNumbers(totalPages: number, page: number): Array<number | "ellipsis"> {
+  if (totalPages <= 7) {
+    return Array.from({ length: totalPages }, (_, index) => index + 1);
+  }
+  const visible = new Set([1, totalPages, page - 1, page, page + 1]);
+  const pages = [...visible]
+    .filter((item) => item >= 1 && item <= totalPages)
+    .sort((left, right) => left - right);
+  const result: Array<number | "ellipsis"> = [];
+  pages.forEach((item, index) => {
+    if (index > 0 && item - pages[index - 1] > 1) result.push("ellipsis");
+    result.push(item);
+  });
+  return result;
 }
 
 function SearchView({
@@ -2880,11 +2939,12 @@ function SearchView({
                 </button>
               ))}
             </div>
-            <SearchPager
+            <ListPagination
               page={positions.page}
               pageSize={positions.pageSize}
               total={positions.total}
               onPage={onPositionPage}
+              className="search-pagination"
             />
           </>
         ) : (
@@ -2937,11 +2997,12 @@ function SearchView({
                 </button>
               ))}
             </div>
-            <SearchPager
+            <ListPagination
               page={applications.page}
               pageSize={applications.pageSize}
               total={applications.total}
               onPage={onApplicationPage}
+              className="search-pagination"
             />
           </>
         ) : (
@@ -3945,6 +4006,108 @@ function StagedSupplementalAttachmentsField({
       {files.length > 0 && <div className="quick-attachment-list">{files.map((file, index) => <QuickCaptureAttachmentRow file={file} key={`${file.name}-${file.size}-${file.lastModified}-${index}`} disabled={Boolean(disabled)} onRemove={() => onChange(files.filter((_, itemIndex) => itemIndex !== index))} />)}</div>}
     </div>
   </Field>;
+}
+
+function ExistingPositionAttachmentsField({
+  items,
+  onError,
+}: {
+  items: PositionAttachment[];
+  onError: (message: string) => void;
+}) {
+  const images = items.filter(attachmentIsImage);
+  const files = items.filter((item) => !attachmentIsImage(item));
+  return (
+    <Field wide label={`已上传附件${items.length ? `（${items.length}）` : ""}`}>
+      <div className="existing-position-attachments">
+        {items.length ? (
+          <>
+            <span>已保存到该岗位；可直接打开。删除请在岗位详情中操作。</span>
+            {images.length > 0 && (
+              <div className="existing-position-image-list">
+                {images.map((item) => (
+                  <ExistingPositionImageAttachment
+                    item={item}
+                    key={item.id}
+                    onError={onError}
+                  />
+                ))}
+              </div>
+            )}
+            {files.length > 0 && (
+              <div className="existing-position-file-list">
+                {files.map((item) => (
+                  <button
+                    type="button"
+                    className="existing-position-file"
+                    key={item.id}
+                    title={`打开 ${item.originalName}`}
+                    onClick={() =>
+                      void api
+                        .openPositionAttachment(item.id)
+                        .catch((reason) => onError(messageOf(reason)))
+                    }
+                  >
+                    <FileText size={16} />
+                    <span>
+                      <strong>{item.originalName}</strong>
+                      <small>{attachmentSize(item.sizeBytes)}</small>
+                    </span>
+                    <ExternalLink size={13} />
+                  </button>
+                ))}
+              </div>
+            )}
+          </>
+        ) : (
+          <span>暂无已上传附件；可在下方添加后随本次保存上传。</span>
+        )}
+      </div>
+    </Field>
+  );
+}
+
+function ExistingPositionImageAttachment({
+  item,
+  onError,
+}: {
+  item: PositionAttachment;
+  onError: (message: string) => void;
+}) {
+  const [thumbnail, setThumbnail] = useState("");
+  useEffect(() => {
+    let active = true;
+    void api
+      .positionAttachmentDataURL(item.id)
+      .then((dataURL) => {
+        if (active) setThumbnail(dataURL);
+      })
+      .catch(() => {
+        if (active) setThumbnail("");
+      });
+    return () => {
+      active = false;
+    };
+  }, [item.id]);
+  return (
+    <button
+      type="button"
+      className="existing-position-image"
+      title={`打开 ${item.originalName}`}
+      onClick={() =>
+        void api
+          .openPositionAttachment(item.id)
+          .catch((reason) => onError(messageOf(reason)))
+      }
+    >
+      {thumbnail ? <img src={thumbnail} alt="" /> : <ImagePlus size={18} />}
+      <span>
+        <strong>{item.originalName}</strong>
+        <small>{attachmentSize(item.sizeBytes)}</small>
+      </span>
+      <ExternalLink size={12} />
+    </button>
+  );
 }
 
 function ExistingRelatedMaterialsSummary({
@@ -5929,8 +6092,18 @@ function PositionDialog({
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
 	const [pendingAttachments, setPendingAttachments] = useState<File[]>([]);
+	const [existingAttachments, setExistingAttachments] = useState<PositionAttachment[]>([]);
 	const [links, setLinks] = useState<ResourceLinkInput[]>([]);
 	useEffect(() => { if (!initial?.id) { setLinks([]); return; } void api.resourceLinks("position", initial.id).then(setLinks).catch((reason) => setError(messageOf(reason))); }, [initial?.id]);
+	useEffect(() => {
+		if (!initial?.id) {
+			setExistingAttachments([]);
+			return;
+		}
+		void api.positionAttachments(initial.id)
+			.then(setExistingAttachments)
+			.catch((reason) => setError(messageOf(reason)));
+	}, [initial?.id]);
   const companyCampaigns = campaigns.filter(
     (campaign) => campaign.companyId === companyID,
   );
@@ -6091,6 +6264,7 @@ function PositionDialog({
           />
         </Field>
 		<RelatedLinksFormField links={links} onChange={setLinks} />
+		{initial?.id && <ExistingPositionAttachmentsField items={existingAttachments} onError={setError} />}
 		<StagedSupplementalAttachmentsField
 			label="岗位附件"
 			description="保存后会自动上传，可收录岗位 JD 截图、公告、文档或其他参考文件。"
